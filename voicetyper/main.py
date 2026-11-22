@@ -23,6 +23,7 @@ if importlib.util.find_spec("hf_transfer") is not None:
     os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 
+from PyQt6.QtCore import QTimer
 from PyQt6.QtGui import QAction, QIcon
 from PyQt6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon
 
@@ -205,6 +206,22 @@ class VoiceTyperTrayApp:
             lambda txt: self.injector.inject_text(txt, fallback_typing=self.config.paste_fallback_typing)
         )
 
+        # Overlay Cancel Download Button -> Cancel Transcriber Download
+        self.overlay.cancel_download_clicked.connect(self.transcriber.cancel_download)
+
+        # Wire live model download listener to update desktop overlay in real time
+        def on_model_dl_progress(msg: str, pct: float | None = None, model_name: str = "") -> None:
+            if pct is not None:
+                QTimer.singleShot(0, lambda m=msg, p=pct, n=model_name: self.overlay.update_download_progress(m, p, n))
+            else:
+                if "cancelled" in msg.lower() or "إلغاء" in msg:
+                    QTimer.singleShot(0, self.overlay.cancel_active_download)
+                elif "error" in msg.lower() or "خطأ" in msg:
+                    QTimer.singleShot(0, lambda m=msg: self.overlay.finish_download(False, m))
+
+        if hasattr(self.transcriber, "add_download_listener"):
+            self.transcriber.add_download_listener(on_model_dl_progress)
+
     def _play_sound(self, kind: str) -> None:
         """Play asynchronous start or stop chime sound."""
         if not self.config.start_stop_beeps or sys.platform != "win32":
@@ -255,7 +272,8 @@ class VoiceTyperTrayApp:
         if hasattr(self.hotkey_mgr, "set_toggle_mode"):
             self.hotkey_mgr.set_toggle_mode(self.config.toggle_mode)
         self.startup_action.setChecked(self.config.start_with_windows)
-        self.overlay.reposition()
+        if not getattr(self.transcriber, "is_downloading", False):
+            self.overlay.reposition()
         self._update_tray_tooltip()
         self.settings_dialog = None
 
@@ -270,12 +288,45 @@ class VoiceTyperTrayApp:
                 daemon=True,
             ).start()
 
+    def _notify_model_download_complete(self) -> None:
+        """Play chime, show tray balloon notification, and update overlay checkmark."""
+        # 1. Update overlay with green checkmark
+        self.overlay.finish_download(True)
+
+        # 2. Play subtle chime sound
+        self._play_sound("stop")
+
+        # 3. Windows System Tray Balloon Notification
+        lang = getattr(self.config, "ui_language", "ar")
+        title = "VoiceTyper - تم التحميل" if lang == "ar" else "VoiceTyper - Download Complete"
+        model_name = getattr(self.config, "whisper_model", "large-v3-turbo")
+        msg = (
+            f"تم تحميل موديل الذكاء الاصطناعي ({model_name}) بنجاح وهو جاهز للاستخدام الفوري!"
+            if lang == "ar"
+            else f"AI model ({model_name}) downloaded successfully and ready for use!"
+        )
+        try:
+            self.tray_icon.showMessage(
+                title,
+                msg,
+                QSystemTrayIcon.MessageIcon.Information,
+                3500,
+            )
+        except Exception as err:
+            logger.debug("Failed to show tray notification: %s", err)
+
     def _preload_whisper_model(self) -> None:
-        """Preload local faster-whisper model in the background at startup."""
+        """Preload local faster-whisper model in the background at startup with progress."""
         logger.info("Background preloading local faster-whisper model...")
-        success = self.transcriber.preload_model()
+
+        def on_preload_progress(msg: str, pct: float | None = None) -> None:
+            p_val = pct if pct is not None else 0.0
+            QTimer.singleShot(0, lambda m=msg, p=p_val: self.overlay.update_download_progress(m, p))
+
+        success = self.transcriber.preload_model(on_progress=on_preload_progress)
         if success:
             logger.info("Local faster-whisper model preloaded successfully.")
+            QTimer.singleShot(0, self._notify_model_download_complete)
         else:
             logger.warning("Local faster-whisper model preload did not finish or was skipped.")
 

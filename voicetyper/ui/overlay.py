@@ -96,6 +96,9 @@ class BaseOverlayRenderer:
     _processing_text: str = "Processing speech..."
     _error_text: str = "No speech detected"
     _hover_gear: bool = False
+    _is_downloading: bool = False
+    _download_pct: float | None = None
+    _hover_cancel: bool = False
 
     def width(self) -> int:
         return self.pill_width
@@ -131,8 +134,9 @@ class BaseOverlayRenderer:
         elif self._state == OverlayState.STANDBY:
             self._draw_standby_state(painter)
 
-        # 3. Quick Settings Gear Icon (⚙) on Far Right
+        # 3. Quick Settings Gear Icon (⚙) on Far Right & Cancel Button (✕) when downloading
         self._draw_gear_button(painter)
+        self._draw_cancel_download_button(painter)
 
         # 4. State-Specific 1.8px Gradient Border
         self._draw_gradient_border(painter, rect, radius)
@@ -356,15 +360,31 @@ class BaseOverlayRenderer:
         painter.drawPath(path_a)
 
         # Crisp White Text (Center / Right)
-        font_size = 10 if len(self._processing_text) > 18 else 11
+        is_dl = getattr(self, "_is_downloading", False)
+        font_size = 9 if (is_dl and len(self._processing_text) > 24) else (10 if len(self._processing_text) > 18 else 11)
         painter.setFont(QFont("Segoe UI", font_size, QFont.Weight.DemiBold))
         painter.setPen(QPen(QColor("#F8FAFC")))
-        text_rect = QRectF(150.0, 0.0, 180.0, float(self.pill_height))
+        text_x = 132.0 if is_dl else 150.0
+        text_w = 165.0 if is_dl else 180.0
+        text_rect = QRectF(text_x, 0.0, text_w, float(self.pill_height))
         painter.drawText(
             text_rect,
             Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
             self._processing_text,
         )
+
+        # Slim Glowing Progress Bar along bottom edge when downloading
+        if is_dl and self._download_pct is not None:
+            pct = max(0.0, min(100.0, float(self._download_pct)))
+            bar_x = 24.0
+            bar_max_w = float(self.pill_width) - 48.0
+            curr_w = max(4.0, bar_max_w * (pct / 100.0))
+            bar_y = float(self.pill_height) - 4.5
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(QColor(45, 212, 191, 50)))
+            painter.drawRoundedRect(QRectF(bar_x, bar_y, bar_max_w, 2.5), 1.25, 1.25)
+            painter.setBrush(QBrush(QColor("#38BDF8")))
+            painter.drawRoundedRect(QRectF(bar_x, bar_y, curr_w, 2.5), 1.25, 1.25)
 
     # -------------------------------------------------------------------------
     # State 3: Error (Match Reference Image Bottom Pill)
@@ -484,6 +504,41 @@ class BaseOverlayRenderer:
     def _draw_gear_button(self, painter: QPainter) -> None:
         """Render circular settings gear button (⚙) on the far right (matches reference image)."""
         self._draw_gear_button_at(painter, 345.0, float(self.pill_height) / 2.0, 15.0)
+
+    def _draw_cancel_download_button(self, painter: QPainter) -> None:
+        """Render circular [✕] cancel button when model download is active."""
+        if not getattr(self, "_is_downloading", False):
+            return
+
+        cx = 308.0
+        cy = float(self.pill_height) / 2.0
+        r = 12.0
+
+        if getattr(self, "_hover_cancel", False):
+            bg_color = QColor(220, 38, 38, 220)
+            border_color = QColor(254, 202, 202, 240)
+            x_color = QColor("#FFFFFF")
+        else:
+            bg_color = QColor(185, 28, 28, 90)
+            border_color = QColor(239, 68, 68, 160)
+            x_color = QColor("#FCA5A5")
+
+        painter.setBrush(QBrush(bg_color))
+        painter.setPen(QPen(border_color, 1.2))
+        painter.drawEllipse(QPointF(cx, cy), r, r)
+
+        cross_sz = 3.8
+        pen_x = QPen(x_color, 2.0)
+        pen_x.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen_x)
+        painter.drawLine(
+            QPointF(cx - cross_sz, cy - cross_sz),
+            QPointF(cx + cross_sz, cy + cross_sz),
+        )
+        painter.drawLine(
+            QPointF(cx - cross_sz, cy + cross_sz),
+            QPointF(cx + cross_sz, cy - cross_sz),
+        )
 
     def _draw_retry_icon(self, painter: QPainter, cx: float, cy: float) -> None:
         """Render subtle refresh/retry circular arrow."""
@@ -710,13 +765,28 @@ class BaseOverlayRenderer:
             # Glowing circular wave orb / marble (Matching Image 1 Processing)
             self._draw_wave_orb(painter, 30.0, cy, 12.5)
 
-            painter.setFont(QFont("Segoe UI", 11, QFont.Weight.DemiBold))
+            is_dl = getattr(self, "_is_downloading", False)
+            font_size = 9 if (is_dl and len(self._processing_text) > 24) else (10 if len(self._processing_text) > 18 else 11)
+            painter.setFont(QFont("Segoe UI", font_size, QFont.Weight.DemiBold))
             painter.setPen(QPen(QColor("#F8FAFC")))
+            text_w = 230.0 if is_dl else 260.0
             painter.drawText(
-                QRectF(56.0, 0.0, 260.0, float(self.pill_height)),
+                QRectF(56.0, 0.0, text_w, float(self.pill_height)),
                 Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
                 self._processing_text,
             )
+
+            if is_dl and self._download_pct is not None:
+                pct = max(0.0, min(100.0, float(self._download_pct)))
+                bar_x = 20.0
+                bar_max_w = float(self.pill_width) - 40.0
+                curr_w = max(4.0, bar_max_w * (pct / 100.0))
+                bar_y = float(self.pill_height) - 4.0
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QBrush(QColor(56, 189, 248, 50)))
+                painter.drawRoundedRect(QRectF(bar_x, bar_y, bar_max_w, 2.0), 1.0, 1.0)
+                painter.setBrush(QBrush(QColor("#38BDF8")))
+                painter.drawRoundedRect(QRectF(bar_x, bar_y, curr_w, 2.0), 1.0, 1.0)
 
         elif self._state == OverlayState.ERROR:
             # Amber ! badge
@@ -753,8 +823,9 @@ class BaseOverlayRenderer:
         painter.setPen(QPen(QColor(255, 255, 255, 35), 1.0))
         painter.drawLine(QPointF(324.0, 14.0), QPointF(324.0, 42.0))
 
-        # 5. Gear button centered at cx = 350.0
+        # 5. Gear button centered at cx = 350.0 & Cancel button
         self._draw_gear_button_at(painter, 350.0, cy, 14.0)
+        self._draw_cancel_download_button(painter)
 
         # 6. Thin 1.0px Gradient Border
         b_grad = QLinearGradient(0, 0, float(self.width()), 0)
@@ -848,13 +919,28 @@ class BaseOverlayRenderer:
                 painter.setPen(Qt.PenStyle.NoPen)
                 painter.drawEllipse(QPointF(dx, cy), r, r)
 
-            painter.setFont(QFont("Segoe UI", 11, QFont.Weight.DemiBold))
+            is_dl = getattr(self, "_is_downloading", False)
+            font_size = 9 if (is_dl and len(self._processing_text) > 24) else (10 if len(self._processing_text) > 18 else 11)
+            painter.setFont(QFont("Segoe UI", font_size, QFont.Weight.DemiBold))
             painter.setPen(QPen(QColor("#F4F4F5")))
+            text_w = 210.0 if is_dl else 230.0
             painter.drawText(
-                QRectF(88.0, 0.0, 230.0, float(self.pill_height)),
+                QRectF(84.0, 0.0, text_w, float(self.pill_height)),
                 Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
-                "Transcribing...",
+                self._processing_text,
             )
+
+            if is_dl and self._download_pct is not None:
+                pct = max(0.0, min(100.0, float(self._download_pct)))
+                bar_x = 20.0
+                bar_max_w = float(self.pill_width) - 40.0
+                curr_w = max(4.0, bar_max_w * (pct / 100.0))
+                bar_y = float(self.pill_height) - 4.0
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QBrush(QColor(244, 244, 245, 40)))
+                painter.drawRoundedRect(QRectF(bar_x, bar_y, bar_max_w, 2.0), 1.0, 1.0)
+                painter.setBrush(QBrush(QColor("#F4F4F5")))
+                painter.drawRoundedRect(QRectF(bar_x, bar_y, curr_w, 2.0), 1.0, 1.0)
 
         elif self._state == OverlayState.ERROR:
             # Soft red dot with subtle halo
@@ -890,8 +976,9 @@ class BaseOverlayRenderer:
         painter.setPen(QPen(QColor(42, 42, 46, 220), 1.0))
         painter.drawLine(QPointF(324.0, 15.0), QPointF(324.0, 41.0))
 
-        # 4. Settings gear button at cx = 350.0
+        # 4. Settings gear button at cx = 350.0 & Cancel button
         self._draw_gear_button_at(painter, 350.0, cy, 14.0, is_matte=True)
+        self._draw_cancel_download_button(painter)
 
         # 5. Crisp 1.0px hairline border in #2A2A2E
         painter.setBrush(Qt.BrushStyle.NoBrush)
@@ -982,13 +1069,28 @@ class BaseOverlayRenderer:
             painter.setPen(pen_ring)
             painter.drawArc(ring_rect, start_angle, int(260 * 16))
 
-            painter.setFont(QFont("Segoe UI", 11, QFont.Weight.DemiBold))
+            is_dl = getattr(self, "_is_downloading", False)
+            font_size = 9 if (is_dl and len(self._processing_text) > 24) else (10 if len(self._processing_text) > 18 else 11)
+            painter.setFont(QFont("Segoe UI", font_size, QFont.Weight.DemiBold))
             painter.setPen(QPen(QColor("#F8FAFC")))
+            text_w = 230.0 if is_dl else 260.0
             painter.drawText(
-                QRectF(56.0, 0.0, 260.0, float(self.pill_height)),
+                QRectF(56.0, 0.0, text_w, float(self.pill_height)),
                 Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
-                "Transcribing...",
+                self._processing_text,
             )
+
+            if is_dl and self._download_pct is not None:
+                pct = max(0.0, min(100.0, float(self._download_pct)))
+                bar_x = 16.0
+                bar_max_w = float(self.pill_width) - 32.0
+                curr_w = max(4.0, bar_max_w * (pct / 100.0))
+                bar_y = float(self.pill_height) - 4.0
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QBrush(QColor(96, 165, 250, 40)))
+                painter.drawRoundedRect(QRectF(bar_x, bar_y, bar_max_w, 2.0), 1.0, 1.0)
+                painter.setBrush(QBrush(QColor("#38BDF8")))
+                painter.drawRoundedRect(QRectF(bar_x, bar_y, curr_w, 2.0), 1.0, 1.0)
 
         elif self._state == OverlayState.ERROR:
             # Warning triangle in soft circle
@@ -1018,8 +1120,9 @@ class BaseOverlayRenderer:
         painter.setPen(QPen(QColor(255, 255, 255, 28), 1.0))
         painter.drawLine(QPointF(324.0, 14.0), QPointF(324.0, 42.0))
 
-        # 4. Settings gear button at cx = 350.0
+        # 4. Settings gear button at cx = 350.0 & Cancel button
         self._draw_gear_button_at(painter, 350.0, cy, 14.0, is_fluent=True)
+        self._draw_cancel_download_button(painter)
 
         # 5. Top subtle highlight edge
         painter.setPen(QPen(QColor(255, 255, 255, 55), 1.0))
@@ -1036,6 +1139,7 @@ class OverlayPill(QWidget, BaseOverlayRenderer):
 
     position_changed = pyqtSignal(int, int)  # type: ignore[call-arg]  # (x, y) coordinates on drag release
     settings_clicked = pyqtSignal()  # type: ignore[call-arg]  # Emitted when settings gear icon is clicked
+    cancel_download_clicked = pyqtSignal()  # type: ignore[call-arg]  # Emitted when [✕] download cancel button is clicked
 
     def __init__(
         self,
@@ -1072,6 +1176,13 @@ class OverlayPill(QWidget, BaseOverlayRenderer):
         self._state = OverlayState.HIDDEN
         self._error_text = ""
         self._processing_text = "Processing speech..."
+
+        # Model download state tracking
+        self._is_downloading = False
+        self._download_pct: float | None = None
+        self._download_text = ""
+        self._hover_cancel = False
+        self._cancel_pressed = False
 
         # Drag-and-drop & button interaction tracking
         self._is_dragging = False
@@ -1198,6 +1309,8 @@ class OverlayPill(QWidget, BaseOverlayRenderer):
     # -------------------------------------------------------------------------
     def _is_in_gear_button(self, pos: QPointF | QPoint) -> bool:
         """Check if position is inside the circular gear button."""
+        if self._is_downloading and self._is_in_cancel_button(pos):
+            return False
         if pos.x() >= 324.0:
             return True
         cx = 345.0
@@ -1206,15 +1319,34 @@ class OverlayPill(QWidget, BaseOverlayRenderer):
         dy = pos.y() - cy
         return (dx * dx + dy * dy) <= (18.0 * 18.0)
 
+    def _is_in_cancel_button(self, pos: QPointF | QPoint) -> bool:
+        """Check if position is inside the circular [✕] cancel button."""
+        if not self._is_downloading:
+            return False
+        cx = 308.0
+        cy = float(self.pill_height) / 2.0
+        dx = pos.x() - cx
+        dy = pos.y() - cy
+        return (dx * dx + dy * dy) <= (14.0 * 14.0)
+
     def mousePressEvent(self, event: QMouseEvent | None) -> None:
         if event and event.button() == Qt.MouseButton.LeftButton:
             pos = event.position()
-            if self._is_in_gear_button(pos):
-                self._gear_pressed = True
+            if self._is_in_cancel_button(pos):
+                self._cancel_pressed = True
+                self._gear_pressed = False
                 self._is_dragging = False
                 event.accept()
                 return
 
+            if self._is_in_gear_button(pos):
+                self._gear_pressed = True
+                self._cancel_pressed = False
+                self._is_dragging = False
+                event.accept()
+                return
+
+            self._cancel_pressed = False
             self._gear_pressed = False
             self._is_dragging = True
             self._drag_start_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
@@ -1230,19 +1362,37 @@ class OverlayPill(QWidget, BaseOverlayRenderer):
             event.accept()
             return
 
+        # Check hover over cancel button
+        in_cancel = self._is_in_cancel_button(event.position())
+        if in_cancel != self._hover_cancel:
+            self._hover_cancel = in_cancel
+            if in_cancel:
+                self.setCursor(Qt.CursorShape.PointingHandCursor)
+            elif not self._hover_gear:
+                self.setCursor(Qt.CursorShape.ArrowCursor)
+            self.update()
+
         # Check hover over gear button
         in_gear = self._is_in_gear_button(event.position())
         if in_gear != self._hover_gear:
             self._hover_gear = in_gear
             if in_gear:
                 self.setCursor(Qt.CursorShape.PointingHandCursor)
-            else:
+            elif not self._hover_cancel:
                 self.setCursor(Qt.CursorShape.ArrowCursor)
             self.update()
         event.accept()
 
     def mouseReleaseEvent(self, event: QMouseEvent | None) -> None:
         if event and event.button() == Qt.MouseButton.LeftButton:
+            if self._cancel_pressed:
+                self._cancel_pressed = False
+                if self._is_in_cancel_button(event.position()):
+                    logger.debug("Overlay cancel download button clicked; emitting cancel_download_clicked")
+                    self.cancel_download_clicked.emit()
+                event.accept()
+                return
+
             if self._gear_pressed:
                 self._gear_pressed = False
                 if self._is_in_gear_button(event.position()):
@@ -1263,11 +1413,26 @@ class OverlayPill(QWidget, BaseOverlayRenderer):
                 event.accept()
 
     def leaveEvent(self, event: Any) -> None:
+        changed = False
         if self._hover_gear:
             self._hover_gear = False
+            changed = True
+        if self._hover_cancel:
+            self._hover_cancel = False
+            changed = True
+        if changed:
             self.setCursor(Qt.CursorShape.ArrowCursor)
             self.update()
         super().leaveEvent(event)
+
+    def keyPressEvent(self, event: Any) -> None:
+        if event and event.key() == Qt.Key.Key_Escape:
+            if self._is_downloading:
+                logger.info("Esc pressed on overlay; cancelling model download")
+                self.cancel_download_clicked.emit()
+                event.accept()
+                return
+        super().keyPressEvent(event)
 
     # -------------------------------------------------------------------------
     # State Transitions & Smart Opacity
@@ -1337,6 +1502,65 @@ class OverlayPill(QWidget, BaseOverlayRenderer):
             self._anim_timer.start()
         self.update()
 
+    def show_download(self, text: str = "Downloading model...", pct: float = 0.0, model_name: str = "") -> None:
+        """Activate real-time download display with progress bar, numbers, and cancel button."""
+        self._is_downloading = True
+        self._download_pct = pct
+        self._processing_text = text
+        self._inactivity_timer.stop()
+        self._error_timer.stop()
+        self._state = OverlayState.PROCESSING
+
+        self._fade_to(1.0, duration_ms=120)
+        self.show()
+        self.raise_()
+        self._apply_win32_styles()
+
+        if not self._anim_timer.isActive():
+            self._anim_timer.start()
+        self.update()
+
+    def update_download_progress(self, text: str, pct: float, model_name: str = "") -> None:
+        """Update live download progress numbers and progress bar."""
+        self._is_downloading = True
+        self._download_pct = pct
+        self._processing_text = text
+        if self._state != OverlayState.PROCESSING:
+            self._state = OverlayState.PROCESSING
+            self.setWindowOpacity(1.0)
+            self.show()
+        self.update()
+
+    def finish_download(self, success: bool, message: str = "") -> None:
+        """Finish download: display checkmark/ready message on success or error on failure."""
+        self._is_downloading = False
+        self._download_pct = None
+        self._hover_cancel = False
+        self._cancel_pressed = False
+        if success:
+            lang = getattr(self.config, "ui_language", "ar") if self.config else "ar"
+            ready_msg = "الموديل جاهز للاستخدام ✓" if lang == "ar" else "Model ready ✓"
+            self._processing_text = message or ready_msg
+            self._state = OverlayState.PROCESSING
+            self.setWindowOpacity(1.0)
+            self.update()
+            # Fade to standby after 2.5 seconds
+            QTimer.singleShot(2500, self._on_download_complete_timeout)
+        else:
+            self.show_error(message or "Download cancelled")
+
+    def _on_download_complete_timeout(self) -> None:
+        if not self._is_downloading and self._state == OverlayState.PROCESSING:
+            self.show_standby()
+
+    def cancel_active_download(self) -> None:
+        """Reset download state cleanly."""
+        self._is_downloading = False
+        self._download_pct = None
+        self._hover_cancel = False
+        self._cancel_pressed = False
+        self.show_standby()
+
     def show_error(self, message: str) -> None:
         """Display error badge and toast message for 1.8 seconds."""
         self._inactivity_timer.stop()
@@ -1353,6 +1577,8 @@ class OverlayPill(QWidget, BaseOverlayRenderer):
 
     def show_standby(self) -> None:
         """Smoothly fade down to subtle ghost state (0.35 opacity) and start 60s timeout."""
+        if getattr(self, "_is_downloading", False):
+            return
         self._state = OverlayState.STANDBY
         self._anim_timer.stop()  # Stop 60 FPS timer to save 100% CPU
 

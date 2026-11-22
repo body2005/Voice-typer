@@ -563,6 +563,9 @@ class SettingsDialog(QDialog):
         self._current_lang = getattr(self.config, "ui_language", "ar") or "ar"
 
         self.model_progress_signal.connect(self._on_model_progress_updated)
+        if self.transcriber is not None and hasattr(self.transcriber, "add_download_listener"):
+            self._dl_listener = lambda msg, pct=None, model="": self.model_progress_signal.emit(msg, pct)
+            self.transcriber.add_download_listener(self._dl_listener)
 
         self.setWindowTitle("VoiceTyper Settings")
         self.setMinimumWidth(560)
@@ -1026,7 +1029,8 @@ class SettingsDialog(QDialog):
             self.theme_preview.set_theme(theme)
         if self.overlay is not None:
             self.overlay.set_theme(theme)
-            self.overlay.preview_state(self._current_preview_state)
+            if not getattr(self.transcriber, "is_downloading", False):
+                self.overlay.preview_state(self._current_preview_state)
 
     def _on_preview_state_selected(self, state: OverlayState) -> None:
         """Switch the preview state on both the embedded widget and desktop overlay."""
@@ -1034,7 +1038,8 @@ class SettingsDialog(QDialog):
         if hasattr(self, "theme_preview"):
             self.theme_preview.set_preview_state(state)
         if self.overlay is not None:
-            self.overlay.preview_state(state)
+            if not getattr(self.transcriber, "is_downloading", False):
+                self.overlay.preview_state(state)
         self._update_preview_button_styles()
 
     def _update_preview_button_styles(self) -> None:
@@ -1051,16 +1056,28 @@ class SettingsDialog(QDialog):
 
     def reject(self) -> None:
         """Revert previewed theme if user cancels without saving."""
+        if hasattr(self, "_dl_listener") and self.transcriber is not None:
+            try:
+                self.transcriber.remove_download_listener(self._dl_listener)
+            except Exception:
+                pass
         if self.overlay is not None:
             self.overlay.set_theme(self._initial_theme)
-            self.overlay.show_standby()
+            if not getattr(self.transcriber, "is_downloading", False):
+                self.overlay.show_standby()
         super().reject()
 
     def closeEvent(self, event: Any) -> None:
         """Ensure overlay returns to standby when settings dialog is closed."""
+        if hasattr(self, "_dl_listener") and self.transcriber is not None:
+            try:
+                self.transcriber.remove_download_listener(self._dl_listener)
+            except Exception:
+                pass
         if self.overlay is not None:
             self.overlay.set_theme(self._initial_theme)
-            self.overlay.show_standby()
+            if not getattr(self.transcriber, "is_downloading", False):
+                self.overlay.show_standby()
         super().closeEvent(event)
 
     def _on_engine_changed(self, index: int) -> None:
@@ -1130,6 +1147,19 @@ class SettingsDialog(QDialog):
         is_cached = is_model_cached(model_id)
         self._update_model_cache_dot(is_cached)
 
+        # Check if a model is currently downloading
+        is_dl = getattr(self.transcriber, "is_downloading", False)
+        dl_text, dl_pct, dl_model = getattr(self.transcriber, "download_info", ("", None, ""))
+        if is_dl and dl_model == model_id:
+            self.model_status_label.setText(dl_text or f"Downloading '{dl_model}'...")
+            self.download_now_btn.hide()
+            self.cancel_download_btn.show()
+            self.cancel_download_btn.setEnabled(True)
+            self.model_progress_bar.show()
+            if dl_pct is not None:
+                self.model_progress_bar.setValue(int(dl_pct))
+            return
+
         t = TEXTS.get(getattr(self, "_current_lang", "ar"), TEXTS["ar"])
         if is_cached:
             self.model_status_label.setText(t["cached_disk"])
@@ -1162,6 +1192,15 @@ class SettingsDialog(QDialog):
             self.transcriber.reset_cancel_download()
             self.transcriber.set_whisper_model(sel_model)
 
+        connecting_msg = (
+            f"جاري الاتصال بـ Hugging Face لتحميل '{sel_model}'..."
+            if getattr(self, "_current_lang", "ar") == "ar"
+            else f"Connecting to Hugging Face to download '{sel_model}'..."
+        )
+
+        if self.overlay is not None:
+            self.overlay.show_download(connecting_msg, 0.0, sel_model)
+
         self.download_now_btn.hide()
         self.cancel_download_btn.setEnabled(True)
         self.cancel_download_btn.setText(t["cancel_download"])
@@ -1169,11 +1208,6 @@ class SettingsDialog(QDialog):
         self.model_progress_bar.show()
         self.model_progress_bar.setRange(0, 100)
         self.model_progress_bar.setValue(0)
-        connecting_msg = (
-            f"جاري الاتصال بـ Hugging Face لتحميل '{sel_model}'..."
-            if getattr(self, "_current_lang", "ar") == "ar"
-            else f"Connecting to Hugging Face to download '{sel_model}'..."
-        )
         self.model_status_label.setText(connecting_msg)
 
         import threading
@@ -1191,6 +1225,8 @@ class SettingsDialog(QDialog):
         """Cancel ongoing model download immediately."""
         if self.transcriber is not None:
             self.transcriber.cancel_download()
+        if self.overlay is not None:
+            self.overlay.cancel_active_download()
         is_ar = getattr(self, "_current_lang", "ar") == "ar"
         self.cancel_download_btn.setEnabled(False)
         self.cancel_download_btn.setText("جاري الإلغاء..." if is_ar else "Cancelling...")
@@ -1202,6 +1238,10 @@ class SettingsDialog(QDialog):
         self.model_status_label.setText(status_text)
         is_cancelled = "cancelled" in status_text.lower() or "إلغاء" in status_text
         is_ready = "ready" in status_text.lower() or "✓" in status_text
+
+        if self.overlay is not None and getattr(self.transcriber, "is_downloading", False):
+            pct_val = float(progress_pct) if progress_pct is not None else 0.0
+            self.overlay.update_download_progress(status_text, pct_val)
 
         if is_cancelled:
             self.model_progress_bar.hide()
@@ -1290,8 +1330,20 @@ class SettingsDialog(QDialog):
         if hasattr(self, "theme_preview"):
             self.theme_preview.set_theme(self.config.overlay_theme)
             self.theme_preview.set_preview_state(self._current_preview_state)
-        if self.overlay is not None:
+
+        is_dl = getattr(self.transcriber, "is_downloading", False)
+        if self.overlay is not None and not is_dl:
             self.overlay.preview_state(self._current_preview_state)
+
+        if is_dl:
+            dl_text, dl_pct, dl_model = getattr(self.transcriber, "download_info", ("", None, ""))
+            self.model_status_label.setText(dl_text or f"Downloading '{dl_model}'...")
+            self.download_now_btn.hide()
+            self.cancel_download_btn.show()
+            self.cancel_download_btn.setEnabled(True)
+            self.model_progress_bar.show()
+            if dl_pct is not None:
+                self.model_progress_bar.setValue(int(dl_pct))
 
         # Gemini API Key
         self.api_key_input.setText(self.config.api_key)

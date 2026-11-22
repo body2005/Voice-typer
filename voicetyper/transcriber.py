@@ -152,7 +152,7 @@ def download_model_with_progress(
                 pct = min(100.0, (self.n / self.total) * 100.0)
                 mb_curr = self.n / (1024 * 1024)
                 mb_total = self.total / (1024 * 1024)
-                status_text = f"Downloading: {mb_curr:.1f} MB / {mb_total:.1f} MB ({pct:.1f}%)"
+                status_text = f"Downloading: {mb_curr:.1f} MB / {mb_total:.1f} MB ({pct:.0f}%)"
                 report(status_text, pct)
 
     try:
@@ -350,9 +350,50 @@ class LocalWhisperTranscriber:
         self._cancel_download_event = threading.Event()
         self._last_error: str = ""
 
+        # Global persistent download state
+        self._is_downloading: bool = False
+        self._download_pct: float | None = None
+        self._download_text: str = ""
+        self._download_model_name: str = ""
+        self._download_listeners: list[Callable[..., None]] = []
+
+    @property
+    def is_downloading(self) -> bool:
+        """Return True if model download or preload is actively running."""
+        with self._lock:
+            return self._is_downloading
+
+    @property
+    def download_info(self) -> tuple[str, float | None, str]:
+        """Return (status_text, pct, model_name)."""
+        with self._lock:
+            return self._download_text, self._download_pct, self._download_model_name
+
+    def add_download_listener(self, cb: Callable[..., None]) -> None:
+        """Register a callback for live download progress."""
+        with self._lock:
+            if cb not in self._download_listeners:
+                self._download_listeners.append(cb)
+
+    def remove_download_listener(self, cb: Callable[..., None]) -> None:
+        """Unregister a download progress callback."""
+        with self._lock:
+            if cb in self._download_listeners:
+                self._download_listeners.remove(cb)
+
     def cancel_download(self) -> None:
         """Signal ongoing model download to cancel immediately."""
         self._cancel_download_event.set()
+        with self._lock:
+            self._is_downloading = False
+            self._download_pct = None
+            self._download_text = "Download cancelled"
+            listeners = list(self._download_listeners)
+        for cb in listeners:
+            try:
+                cb("Download cancelled (تم إلغاء التحميل)", None, self.model_size_or_path)
+            except Exception:
+                pass
 
     def reset_cancel_download(self) -> None:
         """Reset cancellation event for new downloads."""
@@ -377,14 +418,29 @@ class LocalWhisperTranscriber:
                 return cancel_check() or self._cancel_download_event.is_set()
 
         def emit_progress(msg: str, pct: float | None = None) -> None:
-            if not on_progress:
-                return
-            try:
-                on_progress(msg, pct)
-            except TypeError:
-                on_progress(msg)
-            except Exception:
-                pass
+            with self._lock:
+                self._download_text = msg
+                self._download_pct = pct
+                listeners = list(self._download_listeners)
+
+            if on_progress:
+                try:
+                    on_progress(msg, pct)
+                except TypeError:
+                    on_progress(msg)
+                except Exception:
+                    pass
+
+            for cb in listeners:
+                try:
+                    cb(msg, pct, self.model_size_or_path)
+                except TypeError:
+                    try:
+                        cb(msg, pct)
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
 
         with self._lock:
             if self._model is not None:
@@ -394,6 +450,8 @@ class LocalWhisperTranscriber:
                 already_loading = True
             else:
                 self._is_loading = True
+                self._is_downloading = not is_model_cached(self.model_size_or_path)
+                self._download_model_name = self.model_size_or_path
                 self._load_event.clear()
                 already_loading = False
 
@@ -415,6 +473,9 @@ class LocalWhisperTranscriber:
                     self.actual_compute_type,
                 )
             else:
+                with self._lock:
+                    self._is_downloading = True
+                    self._download_model_name = self.model_size_or_path
                 emit_progress(f"Downloading model '{self.model_size_or_path}'...", 0.0)
                 logger.info("Downloading faster-whisper model '%s'...", self.model_size_or_path)
                 try:
@@ -427,6 +488,7 @@ class LocalWhisperTranscriber:
                     logger.info("Model download '%s' cancelled by user", self.model_size_or_path)
                     with self._lock:
                         self._is_loading = False
+                        self._is_downloading = False
                         self._load_event.set()
                         self._last_error = "Download cancelled by user"
                     emit_progress("Download cancelled (تم إلغاء التحميل)", None)
@@ -435,6 +497,7 @@ class LocalWhisperTranscriber:
                     if effective_cancel_check():
                         with self._lock:
                             self._is_loading = False
+                            self._is_downloading = False
                             self._load_event.set()
                             self._last_error = "Download cancelled by user"
                         emit_progress("Download cancelled (تم إلغاء التحميل)", None)
@@ -444,6 +507,7 @@ class LocalWhisperTranscriber:
             if effective_cancel_check():
                 with self._lock:
                     self._is_loading = False
+                    self._is_downloading = False
                     self._load_event.set()
                     self._last_error = "Download cancelled by user"
                 emit_progress("Download cancelled (تم إلغاء التحميل)", None)
@@ -492,6 +556,9 @@ class LocalWhisperTranscriber:
             with self._lock:
                 self._model = model
                 self._is_loading = False
+                self._is_downloading = False
+                self._download_pct = 100.0
+                self._download_text = "Model ready ✓"
                 self._load_event.set()
                 self._last_error = ""
             logger.info("faster-whisper model '%s' loaded successfully.", self.model_size_or_path)
@@ -517,6 +584,9 @@ class LocalWhisperTranscriber:
                         with self._lock:
                             self._model = fb_model
                             self._is_loading = False
+                            self._is_downloading = False
+                            self._download_pct = 100.0
+                            self._download_text = f"Model ready ({fb} fallback) ✓"
                             self._load_event.set()
                             self._last_error = ""
                         logger.info("Successfully recovered using cached model '%s'", fb)
@@ -527,6 +597,7 @@ class LocalWhisperTranscriber:
 
             with self._lock:
                 self._is_loading = False
+                self._is_downloading = False
                 self._load_event.set()
             emit_progress(f"Model error: {err}", None)
             return False
@@ -557,6 +628,9 @@ class LocalWhisperTranscriber:
         """Change model size and reset loaded model."""
         with self._lock:
             if self.model_size_or_path != model_name:
+                if self._is_downloading:
+                    self._cancel_download_event.set()
+                    self._is_downloading = False
                 self.model_size_or_path = model_name
                 self._model = None
                 self._is_loading = False
@@ -754,6 +828,30 @@ class Transcriber:
         if self.engine != "local":
             return True
         return self.local_engine.is_model_loaded
+
+    @property
+    def is_downloading(self) -> bool:
+        """Return True if local model download is actively running."""
+        if self.engine != "local":
+            return False
+        return self.local_engine.is_downloading
+
+    @property
+    def download_info(self) -> tuple[str, float | None, str]:
+        """Return (status_text, pct, model_name)."""
+        if self.engine != "local":
+            return ("", None, "")
+        return self.local_engine.download_info
+
+    def add_download_listener(self, cb: Callable[..., None]) -> None:
+        """Register listener for model download progress."""
+        if self.engine == "local":
+            self.local_engine.add_download_listener(cb)
+
+    def remove_download_listener(self, cb: Callable[..., None]) -> None:
+        """Unregister listener for model download progress."""
+        if self.engine == "local":
+            self.local_engine.remove_download_listener(cb)
 
     def preload_model(
         self,

@@ -300,7 +300,8 @@ class VoiceTyperController(QObject):
 
         is_loaded = getattr(self.transcriber, "is_model_loaded", True)
         if self.config.transcription_engine == "local" and not is_loaded:
-            self.overlay_show_processing.emit("Downloading model...")
+            info_text, _, _ = getattr(self.transcriber, "download_info", ("", None, ""))
+            self.overlay_show_processing.emit(info_text or "Downloading model...")
         else:
             self.overlay_show_processing.emit("Processing speech...")
 
@@ -308,7 +309,19 @@ class VoiceTyperController(QObject):
         self._start_transcription_worker(wav_bytes, current_job)
 
     def on_cancel(self) -> None:
-        """Invoked when user presses Esc to abort recording/processing."""
+        """Invoked when user presses Esc to abort recording/processing or model download."""
+        # Check if model download is active
+        is_dl = getattr(self.transcriber, "is_downloading", False) is True
+        if is_dl:
+            logger.info("Esc pressed; cancelling model download")
+            try:
+                self.transcriber.cancel_download()
+            except Exception as err:
+                logger.error("Failed to cancel download: %s", err)
+            self._transition_to(AppState.IDLE)
+            self.overlay_hide.emit()
+            return
+
         current = self.state
         if current not in (AppState.RECORDING, AppState.PROCESSING):
             return

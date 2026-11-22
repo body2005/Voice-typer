@@ -1,6 +1,8 @@
 """Unit tests for UI overlay, drag positioning, smart opacity, and settings dialog."""
 
-from PyQt6.QtCore import QPointF, Qt
+from unittest.mock import MagicMock
+
+from PyQt6.QtCore import QEvent, QPointF, Qt
 from PyQt6.QtGui import QMouseEvent
 
 from voicetyper.config import Config, ConfigManager, MockStartupManager
@@ -395,6 +397,90 @@ def test_settings_dialog_model_cache_labels_and_progress_feedback() -> None:
     assert "ready" in dialog.model_status_label.text().lower() or "✓" in dialog.model_status_label.text()
     assert dialog.model_progress_bar.isHidden()
     dialog.close()
+
+
+def test_overlay_download_progress_and_cancel_button() -> None:
+    """Verify overlay displays download progress, renders progress bar, and emits cancel_download_clicked."""
+    cfg = Config()
+    overlay = OverlayPill(audio_recorder=None, config=cfg)
+    overlay.show()
+
+    # Activate download mode
+    overlay.show_download("Downloading: 45.2 MB / 150.0 MB (30%)", 30.0, "large-v3-turbo")
+    assert overlay._is_downloading is True
+    assert overlay._download_pct == 30.0
+    assert "45.2" in overlay._processing_text
+    assert overlay._state == OverlayState.PROCESSING
+
+    # Update progress
+    overlay.update_download_progress("Downloading: 90.0 MB / 150.0 MB (60%)", 60.0)
+    assert overlay._download_pct == 60.0
+    assert "90.0" in overlay._processing_text
+
+    # Test click on cancel button (x = 308.0, y = 28.0)
+    cancel_emitted = []
+    overlay.cancel_download_clicked.connect(lambda: cancel_emitted.append(True))
+
+    press_event = QMouseEvent(
+        QEvent.Type.MouseButtonPress,
+        QPointF(308.0, 28.0),
+        Qt.MouseButton.LeftButton,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    overlay.mousePressEvent(press_event)
+    assert overlay._cancel_pressed is True
+
+    release_event = QMouseEvent(
+        QEvent.Type.MouseButtonRelease,
+        QPointF(308.0, 28.0),
+        Qt.MouseButton.LeftButton,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    overlay.mouseReleaseEvent(release_event)
+    assert len(cancel_emitted) == 1
+    assert overlay._cancel_pressed is False
+
+    # Test finish download success
+    overlay.finish_download(True)
+    assert overlay._is_downloading is False
+    assert "✓" in overlay._processing_text
+    overlay.hide()
+
+
+def test_settings_dialog_does_not_cancel_or_hide_active_download() -> None:
+    """Verify that opening/closing settings dialog does not disrupt active model download."""
+    cfg = Config()
+    cfg_mgr = ConfigManager(startup_manager=MockStartupManager())
+    overlay = OverlayPill(audio_recorder=None, config=cfg, config_manager=cfg_mgr)
+    overlay.show_download("Downloading: 75.0 MB / 150.0 MB (50%)", 50.0)
+
+    mock_transcriber = MagicMock()
+    mock_transcriber.is_downloading = True
+    mock_transcriber.download_info = ("Downloading: 75.0 MB / 150.0 MB (50%)", 50.0, "large-v3-turbo")
+
+    dialog = SettingsDialog(config=cfg, config_manager=cfg_mgr, overlay=overlay, transcriber=mock_transcriber)
+    dialog.show()
+
+    # Overlay must stay in download state
+    assert overlay._is_downloading is True
+    assert overlay._state == OverlayState.PROCESSING
+
+    # Progress bar in settings must be visible with active progress
+    assert not dialog.model_progress_bar.isHidden()
+    assert dialog.model_progress_bar.value() == 50
+
+    # Changing model combo selection must not cancel active download
+    dialog.whisper_model_combo.setCurrentIndex(1)
+    assert mock_transcriber.cancel_download.call_count == 0
+
+    # Closing or rejecting settings dialog must NOT force overlay to standby while downloading
+    dialog.reject()
+    assert overlay._is_downloading is True
+    assert overlay._state == OverlayState.PROCESSING
+    overlay.hide()
+
 
 
 
