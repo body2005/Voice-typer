@@ -302,6 +302,7 @@ class HotkeyRecorderWidget(QWidget):
 
         # Connect internal signal for thread-safe UI updates from pynput thread
         self._listener_key_signal.connect(self._handle_listener_key)
+        self.set_hotkey(current_hotkey)
 
     def get_hotkey(self) -> str:
         """Return the normalized hotkey string."""
@@ -599,19 +600,34 @@ class SettingsDialog(QDialog):
 
         header_layout.addStretch()
 
-        # Language switcher placed opposite to subtitle in header
-        lang_switch_box = QHBoxLayout()
-        lang_switch_box.setSpacing(6)
-        self.lang_icon_label = QLabel("🌐")
-        self.lang_icon_label.setStyleSheet("font-size: 15px;")
-        self.ui_lang_combo = QComboBox()
-        self.ui_lang_combo.setFixedWidth(110)
-        self.ui_lang_combo.addItem("العربية", "ar")
-        self.ui_lang_combo.addItem("English", "en")
-        self.ui_lang_combo.currentIndexChanged.connect(self._on_ui_lang_selected)
-        lang_switch_box.addWidget(self.lang_icon_label)
-        lang_switch_box.addWidget(self.ui_lang_combo)
-        header_layout.addLayout(lang_switch_box)
+        # Language switcher toggle button placed opposite to subtitle in header
+        self.lang_toggle_btn = QPushButton()
+        self.lang_toggle_btn.setObjectName("langSwitchBtn")
+        self.lang_toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.lang_toggle_btn.setFixedHeight(28)
+        self.lang_toggle_btn.setStyleSheet(
+            "QPushButton#langSwitchBtn {"
+            "    background-color: #2D2F31;"
+            "    color: #E8EAED;"
+            "    border: 1px solid #3C4043;"
+            "    border-radius: 6px;"
+            "    padding: 3px 12px;"
+            "    font-size: 12px;"
+            "    font-weight: 600;"
+            "}"
+            "QPushButton#langSwitchBtn:hover {"
+            "    background-color: #3C4043;"
+            "    border-color: #5F6368;"
+            "    color: #FFFFFF;"
+            "}"
+            "QPushButton#langSwitchBtn:pressed {"
+            "    background-color: #1A73E8;"
+            "    border-color: #4285F4;"
+            "    color: #FFFFFF;"
+            "}"
+        )
+        self.lang_toggle_btn.clicked.connect(self._toggle_language)
+        header_layout.addWidget(self.lang_toggle_btn, alignment=Qt.AlignmentFlag.AlignVCenter)
 
         main_layout.addLayout(header_layout)
 
@@ -646,10 +662,12 @@ class SettingsDialog(QDialog):
         self.whisper_model_combo.currentIndexChanged.connect(self._on_whisper_model_changed)
         model_row.addWidget(self.whisper_model_combo)
 
-        # Model cache indicator dot (vibrant red when cached, gray when not)
-        self.model_cache_dot = QLabel()
+        # Model cache indicator dot button (vibrant glowing red when cached, gray when not)
+        self.model_cache_dot = QPushButton()
         self.model_cache_dot.setObjectName("modelCacheDot")
-        self.model_cache_dot.setFixedSize(16, 16)
+        self.model_cache_dot.setFixedSize(18, 18)
+        self.model_cache_dot.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.model_cache_dot.clicked.connect(self._on_model_cache_dot_clicked)
         model_row.addWidget(self.model_cache_dot)
 
         # Hardware readout badge
@@ -900,10 +918,10 @@ class SettingsDialog(QDialog):
         btn_layout.addWidget(self.save_btn)
         main_layout.addLayout(btn_layout)
 
-    def _on_ui_lang_selected(self, index: int) -> None:
-        """Handle language switcher change."""
-        lang = str(self.ui_lang_combo.itemData(index) or "ar")
-        self._apply_language(lang)
+    def _toggle_language(self) -> None:
+        """Toggle between Arabic and English on single click."""
+        new_lang = "en" if self._current_lang == "ar" else "ar"
+        self._apply_language(new_lang)
 
     def _apply_language(self, lang: str) -> None:
         """Dynamically update all UI text and layout direction for Arabic / English."""
@@ -913,8 +931,12 @@ class SettingsDialog(QDialog):
         # Layout direction
         if lang == "ar":
             self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+            self.lang_toggle_btn.setText("English 🌐")
+            self.lang_toggle_btn.setToolTip("Switch UI to English")
         else:
             self.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+            self.lang_toggle_btn.setText("العربية 🌐")
+            self.lang_toggle_btn.setToolTip("تغيير الواجهة إلى اللغة العربية")
 
         # Window & Header
         self.setWindowTitle(t["title"])
@@ -996,29 +1018,52 @@ class SettingsDialog(QDialog):
         # Refresh model items & cache dot
         self._refresh_model_cache_labels()
 
+    def _on_model_cache_dot_clicked(self) -> None:
+        """Clicking the cache dot starts download if un-cached or checks cache if cached."""
+        sel_model = str(self.whisper_model_combo.currentData())
+        if not is_model_cached(sel_model):
+            self._start_manual_download()
+        else:
+            self._refresh_model_cache_labels()
+
     def _update_model_cache_dot(self, is_cached: bool) -> None:
-        """Update cache dot indicator style (vibrant glowing red when cached, gray when not)."""
+        """Update cache dot indicator style (vibrant glowing red like recording dot when cached, gray when not)."""
         lang = getattr(self, "_current_lang", "ar")
         if is_cached:
             self.model_cache_dot.setStyleSheet(
-                "min-width: 16px; max-width: 16px; min-height: 16px; max-height: 16px; "
-                "border-radius: 8px; background: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5, "
-                "stop:0 #FF5252, stop:0.6 #E53935, stop:1.0 #B71C1C); border: 1px solid #FF8A80;"
+                "QPushButton#modelCacheDot {"
+                "    min-width: 18px; max-width: 18px; min-height: 18px; max-height: 18px;"
+                "    border-radius: 9px;"
+                "    background: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5, "
+                "        stop:0 #FF5252, stop:0.5 #EF4444, stop:1.0 #B91C1C);"
+                "    border: 1.5px solid #FF8A80;"
+                "}"
+                "QPushButton#modelCacheDot:hover {"
+                "    border-color: #FFFFFF;"
+                "}"
             )
             self.model_cache_dot.setToolTip(
-                "الموديل مُحمّل على الجهاز وجاهز للاستخدام الفوري"
+                "الموديل مُحمّل على الجهاز وجاهز للاستخدام الفوري ✓"
                 if lang == "ar"
-                else "Model is downloaded and cached on disk"
+                else "Model is downloaded and ready for use ✓"
             )
         else:
             self.model_cache_dot.setStyleSheet(
-                "min-width: 16px; max-width: 16px; min-height: 16px; max-height: 16px; "
-                "border-radius: 8px; background-color: #5F6368; border: 1px solid #3C4043;"
+                "QPushButton#modelCacheDot {"
+                "    min-width: 18px; max-width: 18px; min-height: 18px; max-height: 18px;"
+                "    border-radius: 9px;"
+                "    background-color: #4B5563;"
+                "    border: 1.5px solid #374151;"
+                "}"
+                "QPushButton#modelCacheDot:hover {"
+                "    border-color: #9CA3AF;"
+                "    background-color: #6B7280;"
+                "}"
             )
             self.model_cache_dot.setToolTip(
-                "الموديل غير مُحمّل على الجهاز - يتطلب التنزيل"
+                "الموديل غير مُحمّل - اضغط هنا لتنزيله"
                 if lang == "ar"
-                else "Model is not cached - download required"
+                else "Model is not downloaded - click to download"
             )
 
     def _on_theme_changed(self, index: int) -> None:
@@ -1189,8 +1234,8 @@ class SettingsDialog(QDialog):
             return
 
         if self.transcriber is not None:
-            self.transcriber.reset_cancel_download()
             self.transcriber.set_whisper_model(sel_model)
+            self.transcriber.reset_cancel_download()
 
         connecting_msg = (
             f"جاري الاتصال بـ Hugging Face لتحميل '{sel_model}'..."
@@ -1206,8 +1251,7 @@ class SettingsDialog(QDialog):
         self.cancel_download_btn.setText(t["cancel_download"])
         self.cancel_download_btn.show()
         self.model_progress_bar.show()
-        self.model_progress_bar.setRange(0, 100)
-        self.model_progress_bar.setValue(0)
+        self.model_progress_bar.setRange(0, 0)
         self.model_status_label.setText(connecting_msg)
 
         import threading
@@ -1217,7 +1261,7 @@ class SettingsDialog(QDialog):
                 self.model_progress_signal.emit(text, pct)
 
             if self.transcriber is not None:
-                self.transcriber.preload_model(on_progress=progress_cb)
+                self.transcriber.preload_model(on_progress=progress_cb, force_reload=True)
 
         threading.Thread(target=bg_download, name="ManualModelDownloader", daemon=True).start()
 
@@ -1258,7 +1302,7 @@ class SettingsDialog(QDialog):
             self._refresh_model_cache_labels()
             return
 
-        if progress_pct is not None:
+        if progress_pct is not None and progress_pct > 0:
             self.model_progress_bar.show()
             self.cancel_download_btn.show()
             self.download_now_btn.hide()
@@ -1268,8 +1312,13 @@ class SettingsDialog(QDialog):
                 self.model_progress_bar.hide()
                 self.cancel_download_btn.hide()
                 self._refresh_model_cache_labels()
+        elif progress_pct is not None and progress_pct == 0.0:
+            self.model_progress_bar.show()
+            self.cancel_download_btn.show()
+            self.download_now_btn.hide()
+            self.model_progress_bar.setRange(0, 0)
         else:
-            if "loading" in status_text.lower():
+            if "loading" in status_text.lower() or "connecting" in status_text.lower():
                 self.model_progress_bar.show()
                 self.model_progress_bar.setRange(0, 0)
                 self.cancel_download_btn.hide()
@@ -1297,11 +1346,6 @@ class SettingsDialog(QDialog):
         """Populate widgets with current Config values."""
         # UI Language (Default Arabic "ar")
         ui_lang = getattr(self.config, "ui_language", "ar") or "ar"
-        idx_lang = self.ui_lang_combo.findData(ui_lang)
-        if idx_lang >= 0:
-            self.ui_lang_combo.setCurrentIndex(idx_lang)
-        else:
-            self.ui_lang_combo.setCurrentIndex(0)
         self._apply_language(ui_lang)
 
         # Engine
@@ -1512,19 +1556,9 @@ class SettingsDialog(QDialog):
         if self.config.whisper_model != new_model:
             if self.transcriber and hasattr(self.transcriber, "set_whisper_model"):
                 self.transcriber.set_whisper_model(new_model)
-                if not is_model_cached(new_model):
-                    import threading
-
-                    def bg_load() -> None:
-                        def progress_cb(text: str, pct: float | None = None) -> None:
-                            self.model_progress_signal.emit(text, pct)
-
-                        self.transcriber.preload_model(on_progress=progress_cb)
-
-                    threading.Thread(target=bg_load, name="SettingsModelLoader", daemon=True).start()
 
         # Update config fields
-        self.config.ui_language = str(self.ui_lang_combo.currentData() or "ar")
+        self.config.ui_language = self._current_lang
         self.config.transcription_engine = engine
         self.config.whisper_model = new_model
         self.config.overlay_theme = str(self.theme_combo.currentData())

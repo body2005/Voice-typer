@@ -211,13 +211,15 @@ class VoiceTyperTrayApp:
 
         # Wire live model download listener to update desktop overlay in real time
         def on_model_dl_progress(msg: str, pct: float | None = None, model_name: str = "") -> None:
-            if pct is not None:
-                QTimer.singleShot(0, lambda m=msg, p=pct, n=model_name: self.overlay.update_download_progress(m, p, n))
+            if "cancelled" in msg.lower() or "إلغاء" in msg:
+                QTimer.singleShot(0, self.overlay.cancel_active_download)
+            elif "error" in msg.lower() or "خطأ" in msg:
+                QTimer.singleShot(0, lambda m=msg: self.overlay.finish_download(False, m))
+            elif "ready" in msg.lower() or "جاهز" in msg:
+                QTimer.singleShot(0, lambda: self.overlay.finish_download(True))
             else:
-                if "cancelled" in msg.lower() or "إلغاء" in msg:
-                    QTimer.singleShot(0, self.overlay.cancel_active_download)
-                elif "error" in msg.lower() or "خطأ" in msg:
-                    QTimer.singleShot(0, lambda m=msg: self.overlay.finish_download(False, m))
+                p_val = float(pct) if pct is not None else 0.0
+                QTimer.singleShot(0, lambda m=msg, p=p_val, n=model_name: self.overlay.update_download_progress(m, p, n))
 
         if hasattr(self.transcriber, "add_download_listener"):
             self.transcriber.add_download_listener(on_model_dl_progress)
@@ -320,13 +322,25 @@ class VoiceTyperTrayApp:
         logger.info("Background preloading local faster-whisper model...")
 
         def on_preload_progress(msg: str, pct: float | None = None) -> None:
-            p_val = pct if pct is not None else 0.0
-            QTimer.singleShot(0, lambda m=msg, p=p_val: self.overlay.update_download_progress(m, p))
+            if "cancelled" in msg.lower() or "إلغاء" in msg:
+                QTimer.singleShot(0, self.overlay.cancel_active_download)
+            elif "error" in msg.lower() or "خطأ" in msg:
+                QTimer.singleShot(0, lambda m=msg: self.overlay.finish_download(False, m))
+            elif pct is not None and pct > 0:
+                QTimer.singleShot(0, lambda m=msg, p=pct: self.overlay.update_download_progress(m, p))
+
+        from voicetyper.transcriber import is_model_cached
+
+        model_name = getattr(self.config, "whisper_model", "large-v3-turbo")
+        was_cached = is_model_cached(model_name)
 
         success = self.transcriber.preload_model(on_progress=on_preload_progress)
         if success:
             logger.info("Local faster-whisper model preloaded successfully.")
-            QTimer.singleShot(0, self._notify_model_download_complete)
+            if not was_cached:
+                QTimer.singleShot(0, self._notify_model_download_complete)
+            else:
+                QTimer.singleShot(0, lambda: self.overlay.finish_download(True))
         else:
             logger.warning("Local faster-whisper model preload did not finish or was skipped.")
 

@@ -1492,6 +1492,8 @@ class OverlayPill(QWidget, BaseOverlayRenderer):
         self._error_timer.stop()
         self._state = OverlayState.PROCESSING
         self._processing_text = message or "Processing speech..."
+        if "download" in self._processing_text.lower() or "تحميل" in self._processing_text:
+            self._is_downloading = True
 
         self._fade_to(1.0, duration_ms=120)
         self.show()

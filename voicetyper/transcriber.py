@@ -398,6 +398,9 @@ class LocalWhisperTranscriber:
     def reset_cancel_download(self) -> None:
         """Reset cancellation event for new downloads."""
         self._cancel_download_event.clear()
+        with self._lock:
+            self._is_loading = False
+            self._is_downloading = False
 
     @property
     def is_model_loaded(self) -> bool:
@@ -409,8 +412,12 @@ class LocalWhisperTranscriber:
         self,
         on_progress: Callable[..., None] | None = None,
         cancel_check: Callable[[], bool] | None = None,
+        force_reload: bool = False,
     ) -> bool:
         """Load model into memory or download in a background thread."""
+        with self._lock:
+            self._cancel_download_event.clear()
+
         if cancel_check is None:
             effective_cancel_check: Callable[[], bool] = self._cancel_download_event.is_set
         else:
@@ -443,10 +450,10 @@ class LocalWhisperTranscriber:
                     pass
 
         with self._lock:
-            if self._model is not None:
+            if self._model is not None and not force_reload:
                 emit_progress("Model ready ✓", 100.0)
                 return True
-            if self._is_loading:
+            if self._is_loading and not force_reload and self._download_model_name == self.model_size_or_path:
                 already_loading = True
             else:
                 self._is_loading = True
@@ -628,13 +635,14 @@ class LocalWhisperTranscriber:
         """Change model size and reset loaded model."""
         with self._lock:
             if self.model_size_or_path != model_name:
-                if self._is_downloading:
+                if self._is_downloading or self._is_loading:
                     self._cancel_download_event.set()
                     self._is_downloading = False
+                    self._is_loading = False
+                    self._load_event.set()
                 self.model_size_or_path = model_name
                 self._model = None
-                self._is_loading = False
-                self._load_event.set()
+                self._cancel_download_event.clear()
 
     def transcribe(
         self,
@@ -857,12 +865,14 @@ class Transcriber:
         self,
         on_progress: Callable[..., None] | None = None,
         cancel_check: Callable[[], bool] | None = None,
+        force_reload: bool = False,
     ) -> bool:
         """Preload the local model if local engine is active."""
         if self.engine == "local":
             return self.local_engine.preload_model(
                 on_progress=on_progress,
                 cancel_check=cancel_check,
+                force_reload=force_reload,
             )
         return True
 
