@@ -1278,7 +1278,9 @@ class SettingsDialog(QDialog):
         self.cancel_download_btn.setText(t["cancel_download"])
         self.cancel_download_btn.show()
         self.model_progress_bar.show()
-        self.model_progress_bar.setRange(0, 0)
+        self.model_progress_bar.setRange(0, 100)
+        self.model_progress_bar.setValue(0)
+        self.model_progress_bar.setFormat("0%")
         self.model_status_label.setText(connecting_msg)
 
         import threading
@@ -1327,29 +1329,31 @@ class SettingsDialog(QDialog):
             self.model_progress_bar.hide()
             self.cancel_download_btn.hide()
             self.download_now_btn.hide()
+            self._update_model_cache_dot(True)
             self._refresh_model_cache_labels()
             return
 
-        if progress_pct is not None and progress_pct > 0:
+        if progress_pct is not None:
             self.model_progress_bar.show()
             self.cancel_download_btn.show()
+            self.cancel_download_btn.setEnabled(True)
             self.download_now_btn.hide()
             self.model_progress_bar.setRange(0, 100)
             self.model_progress_bar.setValue(int(progress_pct))
+            self.model_progress_bar.setFormat(f"{int(progress_pct)}%")
             if progress_pct >= 100.0:
                 self.model_progress_bar.hide()
                 self.cancel_download_btn.hide()
+                self._update_model_cache_dot(True)
                 self._refresh_model_cache_labels()
-        elif progress_pct is not None and progress_pct == 0.0:
-            self.model_progress_bar.show()
-            self.cancel_download_btn.show()
-            self.download_now_btn.hide()
-            self.model_progress_bar.setRange(0, 0)
         else:
-            if "loading" in status_text.lower() or "connecting" in status_text.lower():
+            if "loading" in status_text.lower() or "connecting" in status_text.lower() or "جاري" in status_text:
                 self.model_progress_bar.show()
-                self.model_progress_bar.setRange(0, 0)
-                self.cancel_download_btn.hide()
+                self.model_progress_bar.setRange(0, 100)
+                self.model_progress_bar.setValue(0)
+                self.model_progress_bar.setFormat("0%")
+                self.cancel_download_btn.show()
+                self.cancel_download_btn.setEnabled(True)
 
     def _refresh_microphones(self) -> None:
         """Scan and populate available input devices with clean, deduplicated names."""

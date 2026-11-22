@@ -300,34 +300,29 @@ def test_download_model_with_progress_and_cancel() -> None:
         progress_reports.append((text, pct))
 
     # Test immediate cancellation
-    with patch("huggingface_hub.snapshot_download") as mock_dl:
-        mock_dl.return_value = "/fake/model/path"
+    with pytest.raises(InterruptedError):
+        download_model_with_progress(
+            "tiny",
+            on_progress=on_progress,
+            cancel_check=lambda: True,
+        )
 
-        with pytest.raises(InterruptedError):
-            download_model_with_progress(
-                "tiny",
-                on_progress=on_progress,
-                cancel_check=lambda: True,
-            )
-        assert mock_dl.call_count == 0
+    # Test output directory and completion with mocked responses
+    import tempfile
+    from unittest.mock import MagicMock
+    with tempfile.TemporaryDirectory() as td:
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.headers = {"Content-Length": "12000000"}
+        mock_resp.iter_content.return_value = [b"x" * 1024 * 1024] * 12
+        mock_resp.__enter__.return_value = mock_resp
 
-    # Test progress format "X MB / Y MB (Z%)"
-    with patch("huggingface_hub.snapshot_download") as mock_dl:
-        def fake_snapshot(*args: Any, **kwargs: Any) -> str:
-            tqdm_cls = kwargs.get("tqdm_class")
-            if tqdm_cls:
-                tracker = tqdm_cls(total=100 * 1024 * 1024)
-                tracker.update(25 * 1024 * 1024)
-                tracker.update(50 * 1024 * 1024)
-            return "/fake/model/path"
-
-        mock_dl.side_effect = fake_snapshot
-        path = download_model_with_progress("tiny", on_progress=on_progress)
-        assert path == "/fake/model/path"
-        downloading_reports = [r for r in progress_reports if "MB /" in r[0]]
-        assert len(downloading_reports) >= 1
-        assert "MB /" in downloading_reports[0][0]
-        assert "%" in downloading_reports[0][0]
+        with patch("requests.Session.get", return_value=mock_resp), \
+             patch("requests.Session.head", return_value=mock_resp):
+            path = download_model_with_progress("tiny", on_progress=on_progress, output_dir=td)
+            assert str(td) in path
+            assert any("Downloading:" in r[0] for r in progress_reports)
+            assert any(r[1] == 100.0 for r in progress_reports)
 
 
 

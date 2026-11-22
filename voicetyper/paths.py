@@ -57,6 +57,16 @@ def get_config_path() -> Path:
     return get_app_data_dir() / "config.json"
 
 
+def get_models_dir() -> Path:
+    """Return path to models directory (%APPDATA%/VoiceTyper/models), creating it if it doesn't exist."""
+    models_dir = get_app_data_dir() / "models"
+    try:
+        models_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as err:
+        logging.warning("Failed to create models directory %s: %s", models_dir, err)
+    return models_dir
+
+
 def get_log_dir() -> Path:
     """Return path to logs directory, creating it if it doesn't exist."""
     log_dir = get_app_data_dir() / "logs"

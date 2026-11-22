@@ -56,44 +56,97 @@ MODELS_CATALOG: list[tuple[str, str, str]] = [
 ]
 
 
-def is_model_cached(model_size_or_id: str) -> bool:
-    """Check if faster-whisper model files exist locally in Hugging Face cache."""
+MODEL_REPOS: dict[str, str] = {
+    "tiny": "Systran/faster-whisper-tiny",
+    "base": "Systran/faster-whisper-base",
+    "small": "Systran/faster-whisper-small",
+    "medium": "Systran/faster-whisper-medium",
+    "large-v3-turbo": "mobiuslabsgmbh/faster-whisper-large-v3-turbo",
+    "turbo": "mobiuslabsgmbh/faster-whisper-large-v3-turbo",
+    "large-v3": "Systran/faster-whisper-large-v3",
+    "Systran/faster-whisper-large-v3": "Systran/faster-whisper-large-v3",
+    "deepdml/faster-whisper-large-v3-turbo-ct2": "deepdml/faster-whisper-large-v3-turbo-ct2",
+}
+
+MODEL_REQUIRED_FILES: dict[str, list[str]] = {
+    "tiny": ["config.json", "tokenizer.json", "vocabulary.txt", "model.bin"],
+    "base": ["config.json", "tokenizer.json", "vocabulary.txt", "model.bin"],
+    "small": ["config.json", "tokenizer.json", "vocabulary.txt", "model.bin"],
+    "medium": ["config.json", "tokenizer.json", "vocabulary.txt", "model.bin"],
+    "large-v3-turbo": ["config.json", "preprocessor_config.json", "tokenizer.json", "vocabulary.json", "model.bin"],
+    "turbo": ["config.json", "preprocessor_config.json", "tokenizer.json", "vocabulary.json", "model.bin"],
+    "large-v3": ["config.json", "preprocessor_config.json", "tokenizer.json", "vocabulary.json", "model.bin"],
+    "Systran/faster-whisper-large-v3": ["config.json", "preprocessor_config.json", "tokenizer.json", "vocabulary.json", "model.bin"],
+    "deepdml/faster-whisper-large-v3-turbo-ct2": ["config.json", "preprocessor_config.json", "tokenizer.json", "vocabulary.json", "model.bin"],
+}
+
+MODEL_APPROX_BYTES: dict[str, int] = {
+    "tiny": 77_667_000,
+    "base": 147_700_000,
+    "small": 507_000_000,
+    "medium": 1_607_000_000,
+    "large-v3-turbo": 1_625_000_000,
+    "turbo": 1_625_000_000,
+    "large-v3": 3_240_000_000,
+    "Systran/faster-whisper-large-v3": 3_240_000_000,
+    "deepdml/faster-whisper-large-v3-turbo-ct2": 1_625_000_000,
+}
+
+
+def get_cached_model_path(size_or_id: str) -> str | None:
+    """Return local filesystem path to model if cached and complete, else None."""
+    from voicetyper.paths import get_models_dir
+
+    # 1. Check VoiceTyper AppData models directory
+    safe_name = re.sub(r'[\\/*?:"<>|]', "_", size_or_id.replace("/", "__"))
+    custom_dir = get_models_dir() / safe_name
+    model_bin = custom_dir / "model.bin"
+    if model_bin.is_file() and model_bin.stat().st_size > 10_000_000:
+        return str(custom_dir)
+
+    # Check mapped repo ID in models dir
+    repo_id = MODEL_REPOS.get(size_or_id)
+    if repo_id and repo_id != size_or_id:
+        repo_safe = re.sub(r'[\\/*?:"<>|]', "_", repo_id.replace("/", "__"))
+        custom_repo_dir = get_models_dir() / repo_safe
+        if (custom_repo_dir / "model.bin").is_file() and (custom_repo_dir / "model.bin").stat().st_size > 10_000_000:
+            return str(custom_repo_dir)
+
+    # 2. Check faster-whisper utils / huggingface cache
     try:
         from faster_whisper.utils import download_model
 
-        path = download_model(model_size_or_id, local_files_only=True)
-        if os.path.exists(os.path.join(path, "model.bin")):
-            return True
+        path = download_model(size_or_id, local_files_only=True)
+        if os.path.exists(os.path.join(path, "model.bin")) and os.path.getsize(os.path.join(path, "model.bin")) > 10_000_000:
+            return str(path)
     except Exception:
         pass
 
-    # For Systran/faster-whisper-large-v3 or large-v3 alias
-    if "large-v3" in model_size_or_id and "turbo" not in model_size_or_id:
-        try:
-            from faster_whisper.utils import download_model
+    # For Systran/faster-whisper-large-v3 or large-v3 alias in HF cache
+    if "large-v3" in size_or_id and "turbo" not in size_or_id:
+        for alias in ("large-v3", "Systran/faster-whisper-large-v3"):
+            try:
+                from faster_whisper.utils import download_model
 
-            for alias in ("large-v3", "Systran/faster-whisper-large-v3"):
-                try:
-                    path = download_model(alias, local_files_only=True)
-                    if os.path.exists(os.path.join(path, "model.bin")):
-                        return True
-                except Exception:
-                    pass
-        except Exception:
-            pass
+                path = download_model(alias, local_files_only=True)
+                if os.path.exists(os.path.join(path, "model.bin")) and os.path.getsize(os.path.join(path, "model.bin")) > 10_000_000:
+                    return str(path)
+            except Exception:
+                pass
 
-    # For deepdml/faster-whisper-large-v3-turbo-ct2, check if large-v3-turbo is cached
-    if "deepdml" in model_size_or_id:
-        try:
-            from faster_whisper.utils import download_model
+    # For deepdml alias
+    if "deepdml" in size_or_id:
+        for alias in ("large-v3-turbo", "mobiuslabsgmbh/faster-whisper-large-v3-turbo"):
+            p = get_cached_model_path(alias)
+            if p:
+                return p
 
-            path = download_model("large-v3-turbo", local_files_only=True)
-            if os.path.exists(os.path.join(path, "model.bin")):
-                return True
-        except Exception:
-            pass
+    return None
 
-    return False
+
+def is_model_cached(model_size_or_id: str) -> bool:
+    """Check if faster-whisper model files exist locally in VoiceTyper dir or Hugging Face cache."""
+    return get_cached_model_path(model_size_or_id) is not None
 
 
 def download_model_with_progress(
@@ -103,27 +156,10 @@ def download_model_with_progress(
     cache_dir: str | None = None,
     cancel_check: Callable[[], bool] | None = None,
 ) -> str:
-    """Download faster-whisper model files with real-time percentage and byte progress."""
-    import re
-
-    import huggingface_hub
-    from faster_whisper.utils import _MODELS
-    from tqdm.auto import tqdm
-
-    if re.match(r".*/.*", size_or_id):
-        repo_id = size_or_id
-    else:
-        repo_id = _MODELS.get(size_or_id)
-        if repo_id is None:
-            raise ValueError(f"Invalid model size '{size_or_id}'")
-
-    allow_patterns = [
-        "config.json",
-        "preprocessor_config.json",
-        "model.bin",
-        "tokenizer.json",
-        "vocabulary.*",
-    ]
+    """Direct, resilient chunked streaming downloader for Whisper models with real-time byte & percentage progress."""
+    from pathlib import Path
+    import requests
+    from voicetyper.paths import get_models_dir
 
     def report(text: str, pct: float | None = None) -> None:
         if not on_progress:
@@ -135,63 +171,159 @@ def download_model_with_progress(
         except Exception:
             pass
 
-    # Temporarily disable hf-transfer so Python tqdm callbacks and cancellation function smoothly
-    prev_hf_transfer = os.environ.get("HF_HUB_ENABLE_HF_TRANSFER")
-    os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "0"
+    repo_id = MODEL_REPOS.get(size_or_id, size_or_id)
+    required_files = list(
+        MODEL_REQUIRED_FILES.get(
+            size_or_id,
+            MODEL_REQUIRED_FILES.get(
+                repo_id,
+                ["config.json", "preprocessor_config.json", "tokenizer.json", "vocabulary.json", "vocabulary.txt", "model.bin"],
+            ),
+        )
+    )
 
-    class DownloadProgressTracker(tqdm):
-        """Thread-safe tqdm subclass forwarding progress to on_progress callback."""
+    if output_dir is not None:
+        target_dir = Path(output_dir)
+    else:
+        safe_name = re.sub(r'[\\/*?:"<>|]', "_", size_or_id.replace("/", "__"))
+        target_dir = get_models_dir() / safe_name
+    target_dir.mkdir(parents=True, exist_ok=True)
 
-        def update(self, n: int = 1) -> None:
-            if cancel_check and cancel_check():
-                raise InterruptedError("Model download cancelled by user.")
-            super().update(n)
-            if cancel_check and cancel_check():
-                raise InterruptedError("Model download cancelled by user.")
-            if self.total and self.total > 10000:
-                pct = min(100.0, (self.n / self.total) * 100.0)
-                mb_curr = self.n / (1024 * 1024)
-                mb_total = self.total / (1024 * 1024)
-                status_text = f"Downloading: {mb_curr:.1f} MB / {mb_total:.1f} MB ({pct:.0f}%)"
-                report(status_text, pct)
-            elif self.n > 0:
-                mb_curr = self.n / (1024 * 1024)
-                status_text = f"Downloading: {mb_curr:.1f} MB..."
-                report(status_text, None)
+    report(f"Connecting to download '{size_or_id}'...", 0.0)
+    if cancel_check and cancel_check():
+        raise InterruptedError("Model download cancelled by user.")
 
+    # Configure session with robust certifi and fallback SSL
+    session = requests.Session()
     try:
-        kwargs: dict[str, Any] = {
-            "local_files_only": False,
-            "allow_patterns": allow_patterns,
-            "tqdm_class": DownloadProgressTracker,
-        }
-        if output_dir is not None:
-            kwargs["local_dir"] = output_dir
-            kwargs["local_dir_use_symlinks"] = False
-        if cache_dir is not None:
-            kwargs["cache_dir"] = cache_dir
+        import certifi
 
-        report(f"Connecting to download '{size_or_id}'...", 0.0)
+        session.verify = certifi.where()
+    except Exception:
+        session.verify = True
+
+    # Check endpoints: primary vs high-speed mirror
+    endpoints = ["https://huggingface.co", "https://hf-mirror.com"]
+    active_endpoint = endpoints[0]
+    try:
+        test_resp = session.head(
+            f"{active_endpoint}/{repo_id}/resolve/main/config.json",
+            allow_redirects=True,
+            timeout=4,
+        )
+        if test_resp.status_code >= 400:
+            active_endpoint = endpoints[1]
+    except Exception:
+        active_endpoint = endpoints[1]
+
+    # Estimated total bytes
+    total_bytes = MODEL_APPROX_BYTES.get(
+        size_or_id, MODEL_APPROX_BYTES.get(repo_id, 150_000_000)
+    )
+    total_downloaded = 0
+    last_report_time = 0.0
+
+    # Probe actual model.bin size via HEAD request if possible
+    try:
+        head_resp = session.head(
+            f"{active_endpoint}/{repo_id}/resolve/main/model.bin",
+            allow_redirects=True,
+            timeout=5,
+        )
+        cl = head_resp.headers.get("Content-Length")
+        if cl and int(cl) > 10_000_000:
+            total_bytes = int(cl) + 4_000_000
+    except Exception:
+        pass
+
+    for filename in required_files:
         if cancel_check and cancel_check():
             raise InterruptedError("Model download cancelled by user.")
 
-        try:
-            model_path = huggingface_hub.snapshot_download(repo_id, **kwargs)
-        except Exception as main_err:
-            if cancel_check and cancel_check():
-                raise InterruptedError("Model download cancelled by user.")
-            logger.warning("Primary HuggingFace connection failed (%s); retrying via high-speed mirror (hf-mirror.com)...", main_err)
-            report("Retrying download via high-speed mirror (hf-mirror.com)...", 5.0)
-            kwargs["endpoint"] = "https://hf-mirror.com"
-            model_path = huggingface_hub.snapshot_download(repo_id, **kwargs)
+        target_file = target_dir / filename
+        part_file = target_dir / f"{filename}.part"
 
-        report("Download complete. Initializing model...", 100.0)
-        return str(model_path)
-    finally:
-        if prev_hf_transfer is not None:
-            os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = prev_hf_transfer
-        else:
-            os.environ.pop("HF_HUB_ENABLE_HF_TRANSFER", None)
+        # Check if file is already fully downloaded
+        if target_file.is_file() and target_file.stat().st_size > 0:
+            if filename == "model.bin":
+                if target_file.stat().st_size > 10_000_000:
+                    total_downloaded += target_file.stat().st_size
+                    continue
+            else:
+                total_downloaded += target_file.stat().st_size
+                continue
+
+        downloaded_ok = False
+        last_err: Exception | None = None
+
+        # Retry with endpoint fallback if needed
+        for ep in ([active_endpoint] + [e for e in endpoints if e != active_endpoint]):
+            file_url = f"{ep}/{repo_id}/resolve/main/{filename}"
+            try:
+                if cancel_check and cancel_check():
+                    raise InterruptedError("Model download cancelled by user.")
+
+                with session.get(file_url, stream=True, allow_redirects=True, timeout=(6, 30)) as resp:
+                    if resp.status_code == 404:
+                        # Non-essential files like preprocessor_config.json might not exist in every repo
+                        if filename != "model.bin" and filename != "config.json":
+                            downloaded_ok = True
+                            break
+                        resp.raise_for_status()
+                    resp.raise_for_status()
+
+                    content_len = resp.headers.get("Content-Length")
+                    if content_len and filename == "model.bin":
+                        total_bytes = total_downloaded + int(content_len)
+
+                    with open(part_file, "wb") as f_out:
+                        for chunk in resp.iter_content(chunk_size=131072):  # 128 KB
+                            if cancel_check and cancel_check():
+                                resp.close()
+                                f_out.close()
+                                if part_file.exists():
+                                    part_file.unlink(missing_ok=True)
+                                raise InterruptedError("Model download cancelled by user.")
+                            if chunk:
+                                f_out.write(chunk)
+                                total_downloaded += len(chunk)
+                                now = time.time()
+                                if now - last_report_time >= 0.2:
+                                    pct = min(99.0, (total_downloaded / max(1, total_bytes)) * 100.0)
+                                    mb_curr = total_downloaded / (1024 * 1024)
+                                    mb_tot = total_bytes / (1024 * 1024)
+                                    status_text = f"Downloading: {mb_curr:.1f} MB / {mb_tot:.1f} MB ({pct:.0f}%)"
+                                    report(status_text, pct)
+                                    last_report_time = now
+
+                if part_file.exists():
+                    if target_file.exists():
+                        target_file.unlink()
+                    part_file.rename(target_file)
+                downloaded_ok = True
+                active_endpoint = ep
+                break
+            except InterruptedError:
+                if part_file.exists():
+                    part_file.unlink(missing_ok=True)
+                raise
+            except Exception as err:
+                last_err = err
+                if part_file.exists():
+                    part_file.unlink(missing_ok=True)
+                logger.warning("Download chunk failed for %s from %s (%s); trying alternative...", filename, ep, err)
+                continue
+
+        if not downloaded_ok and filename in ("model.bin", "config.json"):
+            raise RuntimeError(f"Failed to download required model file '{filename}' from all mirrors: {last_err}")
+
+    # Validate final model.bin
+    final_model_bin = target_dir / "model.bin"
+    if not final_model_bin.is_file() or final_model_bin.stat().st_size < 10_000_000:
+        raise RuntimeError(f"Model download verification failed: '{final_model_bin}' is missing or too small.")
+
+    report("Download complete. Initializing model...", 100.0)
+    return str(target_dir)
 
 
 BASE_SYSTEM_PROMPT = """You are an expert real-time voice-to-text transcription engine.
@@ -534,15 +666,17 @@ class LocalWhisperTranscriber:
                 return self._model is not None
 
         try:
-            cached = is_model_cached(self.model_size_or_path)
-            if cached:
+            cached_path = get_cached_model_path(self.model_size_or_path)
+            if cached_path:
                 emit_progress("Loading model from local disk (~3 sec)...", None)
                 logger.info(
-                    "Loading cached faster-whisper model '%s' on %s (%s)...",
+                    "Loading cached faster-whisper model '%s' from %s on %s (%s)...",
                     self.model_size_or_path,
+                    cached_path,
                     self.actual_device,
                     self.actual_compute_type,
                 )
+                target_to_load = cached_path
             else:
                 with self._lock:
                     self._is_downloading = True
@@ -550,7 +684,7 @@ class LocalWhisperTranscriber:
                 emit_progress(f"Downloading model '{self.model_size_or_path}'...", 0.0)
                 logger.info("Downloading faster-whisper model '%s'...", self.model_size_or_path)
                 try:
-                    download_model_with_progress(
+                    target_to_load = download_model_with_progress(
                         self.model_size_or_path,
                         on_progress=emit_progress,
                         cancel_check=effective_cancel_check,
@@ -618,18 +752,7 @@ class LocalWhisperTranscriber:
                         )
                     raise dev_err
 
-            model = None
-
-            if "deepdml" in self.model_size_or_path:
-                # First try cached large-v3-turbo for instant 4-second startup
-                try:
-                    logger.info("Loading CTranslate2 large-v3-turbo for %s...", self.model_size_or_path)
-                    model = _instantiate("large-v3-turbo")
-                except Exception as cache_err:
-                    logger.warning("Could not load cached large-v3-turbo: %s; trying %s", cache_err, self.model_size_or_path)
-                    model = _instantiate(self.model_size_or_path)
-            else:
-                model = _instantiate(self.model_size_or_path)
+            model = _instantiate(target_to_load)
 
             with self._lock:
                 self._model = model
@@ -728,7 +851,7 @@ class LocalWhisperTranscriber:
         """Transcribe in-memory audio using local faster-whisper engine."""
         start_time = time.monotonic()
 
-        if not audio_data or len(audio_data) == 0:
+        if audio_data is None or len(audio_data) == 0:
             return TranscriptionResult(
                 success=True,
                 text="",
@@ -911,26 +1034,20 @@ class Transcriber:
     @property
     def is_downloading(self) -> bool:
         """Return True if local model download is actively running."""
-        if self.engine != "local":
-            return False
         return self.local_engine.is_downloading
 
     @property
     def download_info(self) -> tuple[str, float | None, str]:
         """Return (status_text, pct, model_name)."""
-        if self.engine != "local":
-            return ("", None, "")
         return self.local_engine.download_info
 
     def add_download_listener(self, cb: Callable[..., None]) -> None:
         """Register listener for model download progress."""
-        if self.engine == "local":
-            self.local_engine.add_download_listener(cb)
+        self.local_engine.add_download_listener(cb)
 
     def remove_download_listener(self, cb: Callable[..., None]) -> None:
         """Unregister listener for model download progress."""
-        if self.engine == "local":
-            self.local_engine.remove_download_listener(cb)
+        self.local_engine.remove_download_listener(cb)
 
     def preload_model(
         self,
@@ -938,24 +1055,20 @@ class Transcriber:
         cancel_check: Callable[[], bool] | None = None,
         force_reload: bool = False,
     ) -> bool:
-        """Preload the local model if local engine is active."""
-        if self.engine == "local":
-            return self.local_engine.preload_model(
-                on_progress=on_progress,
-                cancel_check=cancel_check,
-                force_reload=force_reload,
-            )
-        return True
+        """Preload or download the local faster-whisper model."""
+        return self.local_engine.preload_model(
+            on_progress=on_progress,
+            cancel_check=cancel_check,
+            force_reload=force_reload,
+        )
 
     def cancel_download(self) -> None:
         """Signal ongoing local model download to abort."""
-        if self.engine == "local":
-            self.local_engine.cancel_download()
+        self.local_engine.cancel_download()
 
     def reset_cancel_download(self) -> None:
         """Reset download cancellation event."""
-        if self.engine == "local":
-            self.local_engine.reset_cancel_download()
+        self.local_engine.reset_cancel_download()
 
     def get_active_device_info(self) -> str:
         """Return human-readable device string (e.g. 'GPU (CUDA)' or 'CPU')."""

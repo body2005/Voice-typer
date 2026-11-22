@@ -40,6 +40,8 @@ pyinstaller --noconfirm --clean --noconsole --onedir --noupx ^
     --collect-all "tokenizers" ^
     --collect-all "onnxruntime" ^
     --collect-all "tqdm" ^
+    --collect-all "certifi" ^
+    --collect-all "requests" ^
     main.py
 
 if %ERRORLEVEL% neq 0 (
@@ -68,6 +70,8 @@ pyinstaller --noconfirm --clean --noconsole --onefile --noupx ^
     --collect-all "tokenizers" ^
     --collect-all "onnxruntime" ^
     --collect-all "tqdm" ^
+    --collect-all "certifi" ^
+    --collect-all "requests" ^
     main.py
 
 if %ERRORLEVEL% neq 0 (
