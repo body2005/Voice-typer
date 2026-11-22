@@ -373,17 +373,12 @@ def test_settings_dialog_model_cache_labels_and_progress_feedback() -> None:
     assert hasattr(dialog, "model_cache_dot")
     assert dialog.model_cache_dot is not None
 
-    # Verify model combo items have icons and clean labels (no '[Downloaded ✓]')
-    found_size = False
+    # Verify model combo items have icons and clean labels (only model name, no extra words)
     for i in range(dialog.whisper_model_combo.count()):
         text = dialog.whisper_model_combo.itemText(i)
         assert "[Downloaded ✓]" not in text
         icon = dialog.whisper_model_combo.itemIcon(i)
         assert not icon.isNull()
-        if "MB" in text or "GB" in text:
-            found_size = True
-
-    assert found_size is True
 
     # Test progress signal updates
     dialog.show()

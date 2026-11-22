@@ -46,13 +46,13 @@ DEFAULT_BILINGUAL_PROMPT = (
 )
 
 MODELS_CATALOG: list[tuple[str, str, str]] = [
-    ("large-v3-turbo", "large-v3-turbo (Recommended: Best Arabic + English)", "~1.5 GB"),
-    ("Systran/faster-whisper-large-v3", "large-v3 (High Accuracy: Best for Egyptian Arabic, slower on CPU)", "~3.0 GB"),
-    ("deepdml/faster-whisper-large-v3-turbo-ct2", "large-v3-turbo (deepdml ct2)", "~1.5 GB"),
-    ("medium", "medium (Balanced: High Accuracy)", "~1.5 GB"),
-    ("small", "small (Fast: Recommended for CPU)", "~480 MB"),
-    ("base", "base (Very Fast, Basic Accuracy)", "~145 MB"),
-    ("tiny", "tiny (Ultra Light)", "~75 MB"),
+    ("large-v3-turbo", "large-v3-turbo", "~1.5 GB"),
+    ("Systran/faster-whisper-large-v3", "large-v3", "~3.0 GB"),
+    ("deepdml/faster-whisper-large-v3-turbo-ct2", "large-v3-turbo-ct2", "~1.5 GB"),
+    ("medium", "medium", "~1.5 GB"),
+    ("small", "small", "~480 MB"),
+    ("base", "base", "~145 MB"),
+    ("tiny", "tiny", "~75 MB"),
 ]
 
 

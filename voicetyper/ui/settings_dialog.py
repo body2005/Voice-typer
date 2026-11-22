@@ -106,7 +106,7 @@ QPushButton {
     color: #E8EAED;
     border: 1px solid #3C4043;
     border-radius: 6px;
-    padding: 7px 16px;
+    padding: 6px 12px;
     font-weight: 500;
 }
 QPushButton:hover {
@@ -277,7 +277,7 @@ class HotkeyRecorderWidget(QWidget):
 
         # Record Button
         self.record_btn = QPushButton("Record Hotkey")
-        self.record_btn.setFixedWidth(135)
+        self.record_btn.setMinimumWidth(130)
         self.record_btn.clicked.connect(self._toggle_recording)
 
         # Presets Dropdown (shows selected preset or blank for custom combinations)
@@ -747,11 +747,11 @@ class SettingsDialog(QDialog):
         self.api_key_input.setPlaceholderText("مفتاح Gemini API (اختياري عند استخدام المحرك المحلي)")
 
         self.toggle_key_btn = QPushButton("إظهار")
-        self.toggle_key_btn.setFixedWidth(60)
+        self.toggle_key_btn.setMinimumWidth(80)
         self.toggle_key_btn.clicked.connect(self._toggle_api_key_visibility)
 
         self.test_key_btn = QPushButton("تجربة الاتصال")
-        self.test_key_btn.setFixedWidth(100)
+        self.test_key_btn.setMinimumWidth(110)
         self.test_key_btn.clicked.connect(self._test_api_key)
 
         key_layout.addWidget(self.api_key_input)
@@ -835,7 +835,7 @@ class SettingsDialog(QDialog):
 
         self.mic_combo = QComboBox()
         self.refresh_mic_btn = QPushButton("تحديث")
-        self.refresh_mic_btn.setFixedWidth(70)
+        self.refresh_mic_btn.setMinimumWidth(90)
         self.refresh_mic_btn.clicked.connect(self._refresh_microphones)
 
         mic_layout.addWidget(self.mic_combo)
@@ -1155,7 +1155,7 @@ class SettingsDialog(QDialog):
         for model_id, title, size in MODELS_CATALOG:
             cached = is_model_cached(model_id)
             dot_icon = create_dot_icon(cached)
-            display_text = title if cached else f"{title} ({size})"
+            display_text = title
             self.whisper_model_combo.addItem(dot_icon, display_text, model_id)
 
         idx = self.whisper_model_combo.findData(current_data)
