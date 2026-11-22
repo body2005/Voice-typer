@@ -494,23 +494,44 @@ class SettingsDialog(QDialog):
 
         status_row.addStretch()
 
+        self.download_now_btn = QPushButton("Download Model ⬇")
+        self.download_now_btn.setFixedHeight(22)
+        self.download_now_btn.setStyleSheet(
+            "QPushButton { font-size: 11px; padding: 2px 8px; background-color: #1A73E8; color: #FFFFFF; border-radius: 3px; border: none; font-weight: bold; }"
+            "QPushButton:hover { background-color: #4285F4; }"
+        )
+        self.download_now_btn.clicked.connect(self._start_manual_download)
+        self.download_now_btn.hide()
+        status_row.addWidget(self.download_now_btn)
+
+        self.cancel_download_btn = QPushButton("Cancel ⏹")
+        self.cancel_download_btn.setFixedHeight(22)
+        self.cancel_download_btn.setStyleSheet(
+            "QPushButton { font-size: 11px; padding: 2px 8px; background-color: #C5221F; color: #FFFFFF; border-radius: 3px; border: none; font-weight: bold; }"
+            "QPushButton:hover { background-color: #D93025; }"
+            "QPushButton:disabled { background-color: #5F6368; color: #9AA0A6; }"
+        )
+        self.cancel_download_btn.clicked.connect(self._cancel_active_download)
+        self.cancel_download_btn.hide()
+        status_row.addWidget(self.cancel_download_btn)
+
         self.refresh_cache_btn = QPushButton("Check Cache")
         self.refresh_cache_btn.setFixedHeight(22)
         self.refresh_cache_btn.setStyleSheet(
-            "font-size: 11px; padding: 2px 8px; background-color: #2D2F31; border: 1px solid #3C4043;"
+            "font-size: 11px; padding: 2px 8px; background-color: #2D2F31; border: 1px solid #3C4043; color: #E8EAED;"
         )
         self.refresh_cache_btn.clicked.connect(self._refresh_model_cache_labels)
         status_row.addWidget(self.refresh_cache_btn)
 
         whisper_layout.addLayout(status_row)
 
-        # Download / load progress bar
+        # Download / load progress bar with clear styling
         self.model_progress_bar = QProgressBar()
-        self.model_progress_bar.setFixedHeight(6)
-        self.model_progress_bar.setTextVisible(False)
+        self.model_progress_bar.setFixedHeight(12)
+        self.model_progress_bar.setTextVisible(True)
         self.model_progress_bar.setStyleSheet(
-            "QProgressBar { background-color: #2D2F31; border-radius: 3px; border: none; }"
-            "QProgressBar::chunk { background-color: #4285F4; border-radius: 3px; }"
+            "QProgressBar { background-color: #2D2F31; border-radius: 4px; border: none; text-align: center; color: #FFFFFF; font-size: 9px; font-weight: bold; }"
+            "QProgressBar::chunk { background-color: #4285F4; border-radius: 4px; }"
         )
         self.model_progress_bar.hide()
         whisper_layout.addWidget(self.model_progress_bar)
@@ -775,13 +796,19 @@ class SettingsDialog(QDialog):
         if is_model_cached(sel_model):
             self.model_status_label.setText("Model cached on disk [Ready to load]")
             self.model_progress_bar.hide()
+            self.download_now_btn.hide()
+            self.cancel_download_btn.hide()
         else:
             sz = "~1.5 GB"
             for m, _, s in MODELS_CATALOG:
                 if m == sel_model:
                     sz = s
                     break
-            self.model_status_label.setText(f"Not cached ({sz}). Will download when selected or saved.")
+            self.model_status_label.setText(f"Not cached ({sz}). Ready to download.")
+            self.download_now_btn.show()
+            self.download_now_btn.setEnabled(True)
+            self.model_progress_bar.hide()
+            self.cancel_download_btn.hide()
 
     def _on_whisper_model_changed(self, index: int) -> None:
         """Handle user selecting a different Whisper model with status label update."""
@@ -793,33 +820,97 @@ class SettingsDialog(QDialog):
         if cached:
             self.model_status_label.setText("Model cached on disk [Ready to load]")
             self.model_progress_bar.hide()
+            self.download_now_btn.hide()
+            self.cancel_download_btn.hide()
         else:
             sz = "~1.5 GB"
             for m, _, s in MODELS_CATALOG:
                 if m == model_id:
                     sz = s
                     break
-            self.model_status_label.setText(f"Not cached ({sz}). Will download when saved.")
+            self.model_status_label.setText(f"Not cached ({sz}). Ready to download.")
+            self.download_now_btn.show()
+            self.download_now_btn.setEnabled(True)
             self.model_progress_bar.hide()
+            self.cancel_download_btn.hide()
+
+    def _start_manual_download(self) -> None:
+        """Trigger background download of the selected model with progress and cancellation."""
+        sel_model = str(self.whisper_model_combo.currentData())
+        if is_model_cached(sel_model):
+            self.model_status_label.setText("Model already cached on disk ✓")
+            self.download_now_btn.hide()
+            return
+
+        if self.transcriber is not None:
+            self.transcriber.reset_cancel_download()
+            self.transcriber.set_whisper_model(sel_model)
+
+        self.download_now_btn.hide()
+        self.cancel_download_btn.setEnabled(True)
+        self.cancel_download_btn.setText("Cancel ⏹")
+        self.cancel_download_btn.show()
+        self.model_progress_bar.show()
+        self.model_progress_bar.setRange(0, 100)
+        self.model_progress_bar.setValue(0)
+        self.model_status_label.setText(f"Connecting to Hugging Face to download '{sel_model}'...")
+
+        import threading
+
+        def bg_download() -> None:
+            def progress_cb(text: str, pct: float | None = None) -> None:
+                self.model_progress_signal.emit(text, pct)
+
+            if self.transcriber is not None:
+                self.transcriber.preload_model(on_progress=progress_cb)
+
+        threading.Thread(target=bg_download, name="ManualModelDownloader", daemon=True).start()
+
+    def _cancel_active_download(self) -> None:
+        """Cancel ongoing model download immediately."""
+        if self.transcriber is not None:
+            self.transcriber.cancel_download()
+        self.cancel_download_btn.setEnabled(False)
+        self.cancel_download_btn.setText("Cancelling...")
+        self.model_status_label.setText("Cancelling download... (جاري الإلغاء)")
 
     @pyqtSlot(str, object)
     def _on_model_progress_updated(self, status_text: str, progress_pct: float | None) -> None:
         """Update status label and progress bar without blocking GUI."""
         self.model_status_label.setText(status_text)
+        is_cancelled = "cancelled" in status_text.lower() or "إلغاء" in status_text
+        is_ready = "ready" in status_text.lower() or "✓" in status_text
+
+        if is_cancelled:
+            self.model_progress_bar.hide()
+            self.cancel_download_btn.hide()
+            self.download_now_btn.show()
+            self.download_now_btn.setEnabled(True)
+            self._refresh_model_cache_labels()
+            return
+
+        if is_ready:
+            self.model_progress_bar.hide()
+            self.cancel_download_btn.hide()
+            self.download_now_btn.hide()
+            self._refresh_model_cache_labels()
+            return
+
         if progress_pct is not None:
             self.model_progress_bar.show()
+            self.cancel_download_btn.show()
+            self.download_now_btn.hide()
             self.model_progress_bar.setRange(0, 100)
             self.model_progress_bar.setValue(int(progress_pct))
             if progress_pct >= 100.0:
                 self.model_progress_bar.hide()
+                self.cancel_download_btn.hide()
                 self._refresh_model_cache_labels()
         else:
             if "loading" in status_text.lower():
                 self.model_progress_bar.show()
                 self.model_progress_bar.setRange(0, 0)
-            elif "ready" in status_text.lower():
-                self.model_progress_bar.hide()
-                self._refresh_model_cache_labels()
+                self.cancel_download_btn.hide()
 
     def _refresh_microphones(self) -> None:
         """Scan and populate available input devices with clean, deduplicated names."""

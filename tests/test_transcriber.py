@@ -1,5 +1,6 @@
 """Unit tests for transcriber, prompt injection defenses, error mapping, and text cleanup."""
 
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 from google.genai.errors import APIError
@@ -285,6 +286,47 @@ def test_is_model_cached_and_preload_feedback() -> None:
         assert "Loading model from local disk" in progress_events[0][0]
         # Final event should indicate model ready
         assert "ready" in progress_events[-1][0].lower()
+
+
+def test_download_model_with_progress_and_cancel() -> None:
+    """Verify download_model_with_progress reports byte progress and can be canceled."""
+    import pytest
+    from voicetyper.transcriber import download_model_with_progress
+
+    progress_reports: list[tuple[str, float | None]] = []
+
+    def on_progress(text: str, pct: float | None = None) -> None:
+        progress_reports.append((text, pct))
+
+    # Test immediate cancellation
+    with patch("huggingface_hub.snapshot_download") as mock_dl:
+        mock_dl.return_value = "/fake/model/path"
+
+        with pytest.raises(InterruptedError):
+            download_model_with_progress(
+                "tiny",
+                on_progress=on_progress,
+                cancel_check=lambda: True,
+            )
+        assert mock_dl.call_count == 0
+
+    # Test progress format "X MB / Y MB (Z%)"
+    with patch("huggingface_hub.snapshot_download") as mock_dl:
+        def fake_snapshot(*args: Any, **kwargs: Any) -> str:
+            tqdm_cls = kwargs.get("tqdm_class")
+            if tqdm_cls:
+                tracker = tqdm_cls(total=100 * 1024 * 1024)
+                tracker.update(25 * 1024 * 1024)
+                tracker.update(50 * 1024 * 1024)
+            return "/fake/model/path"
+
+        mock_dl.side_effect = fake_snapshot
+        path = download_model_with_progress("tiny", on_progress=on_progress)
+        assert path == "/fake/model/path"
+        downloading_reports = [r for r in progress_reports if "MB /" in r[0]]
+        assert len(downloading_reports) >= 1
+        assert "MB /" in downloading_reports[0][0]
+        assert "%" in downloading_reports[0][0]
 
 
 

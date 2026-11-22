@@ -101,6 +101,7 @@ def download_model_with_progress(
     on_progress: Callable[..., None] | None = None,
     output_dir: str | None = None,
     cache_dir: str | None = None,
+    cancel_check: Callable[[], bool] | None = None,
 ) -> str:
     """Download faster-whisper model files with real-time percentage and byte progress."""
     import re
@@ -134,33 +135,50 @@ def download_model_with_progress(
         except Exception:
             pass
 
+    # Temporarily disable hf-transfer so Python tqdm callbacks and cancellation function smoothly
+    prev_hf_transfer = os.environ.get("HF_HUB_ENABLE_HF_TRANSFER")
+    os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "0"
+
     class DownloadProgressTracker(tqdm):
         """Thread-safe tqdm subclass forwarding progress to on_progress callback."""
 
         def update(self, n: int = 1) -> None:
+            if cancel_check and cancel_check():
+                raise InterruptedError("Model download cancelled by user.")
             super().update(n)
+            if cancel_check and cancel_check():
+                raise InterruptedError("Model download cancelled by user.")
             if self.total and self.total > 10000:
                 pct = min(100.0, (self.n / self.total) * 100.0)
                 mb_curr = self.n / (1024 * 1024)
                 mb_total = self.total / (1024 * 1024)
-                status_text = f"Downloading model: {mb_curr:.1f} MB / {mb_total:.1f} MB ({pct:.0f}%)"
+                status_text = f"Downloading: {mb_curr:.1f} MB / {mb_total:.1f} MB ({pct:.1f}%)"
                 report(status_text, pct)
 
-    kwargs: dict[str, Any] = {
-        "local_files_only": False,
-        "allow_patterns": allow_patterns,
-        "tqdm_class": DownloadProgressTracker,
-    }
-    if output_dir is not None:
-        kwargs["local_dir"] = output_dir
-        kwargs["local_dir_use_symlinks"] = False
-    if cache_dir is not None:
-        kwargs["cache_dir"] = cache_dir
+    try:
+        kwargs: dict[str, Any] = {
+            "local_files_only": False,
+            "allow_patterns": allow_patterns,
+            "tqdm_class": DownloadProgressTracker,
+        }
+        if output_dir is not None:
+            kwargs["local_dir"] = output_dir
+            kwargs["local_dir_use_symlinks"] = False
+        if cache_dir is not None:
+            kwargs["cache_dir"] = cache_dir
 
-    report(f"Connecting to Hugging Face to download '{size_or_id}'...", 0.0)
-    model_path = huggingface_hub.snapshot_download(repo_id, **kwargs)
-    report("Download complete. Initializing model...", 100.0)
-    return str(model_path)
+        report(f"Connecting to Hugging Face to download '{size_or_id}'...", 0.0)
+        if cancel_check and cancel_check():
+            raise InterruptedError("Model download cancelled by user.")
+
+        model_path = huggingface_hub.snapshot_download(repo_id, **kwargs)
+        report("Download complete. Initializing model...", 100.0)
+        return str(model_path)
+    finally:
+        if prev_hf_transfer is not None:
+            os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = prev_hf_transfer
+        else:
+            os.environ.pop("HF_HUB_ENABLE_HF_TRANSFER", None)
 
 
 BASE_SYSTEM_PROMPT = """You are an expert real-time voice-to-text transcription engine.
@@ -329,7 +347,16 @@ class LocalWhisperTranscriber:
         self._is_loading = False
         self._load_event = threading.Event()
         self._load_event.set()
+        self._cancel_download_event = threading.Event()
         self._last_error: str = ""
+
+    def cancel_download(self) -> None:
+        """Signal ongoing model download to cancel immediately."""
+        self._cancel_download_event.set()
+
+    def reset_cancel_download(self) -> None:
+        """Reset cancellation event for new downloads."""
+        self._cancel_download_event.clear()
 
     @property
     def is_model_loaded(self) -> bool:
@@ -340,8 +367,13 @@ class LocalWhisperTranscriber:
     def preload_model(
         self,
         on_progress: Callable[..., None] | None = None,
+        cancel_check: Callable[[], bool] | None = None,
     ) -> bool:
         """Load model into memory or download in a background thread."""
+        if cancel_check is None:
+            effective_cancel_check: Callable[[], bool] = self._cancel_download_event.is_set
+        else:
+            effective_cancel_check = lambda: cancel_check() or self._cancel_download_event.is_set()
 
         def emit_progress(msg: str, pct: float | None = None) -> None:
             if not on_progress:
@@ -385,9 +417,36 @@ class LocalWhisperTranscriber:
                 emit_progress(f"Downloading model '{self.model_size_or_path}'...", 0.0)
                 logger.info("Downloading faster-whisper model '%s'...", self.model_size_or_path)
                 try:
-                    download_model_with_progress(self.model_size_or_path, on_progress=emit_progress)
+                    download_model_with_progress(
+                        self.model_size_or_path,
+                        on_progress=emit_progress,
+                        cancel_check=effective_cancel_check,
+                    )
+                except InterruptedError:
+                    logger.info("Model download '%s' cancelled by user", self.model_size_or_path)
+                    with self._lock:
+                        self._is_loading = False
+                        self._load_event.set()
+                        self._last_error = "Download cancelled by user"
+                    emit_progress("Download cancelled (تم إلغاء التحميل)", None)
+                    return False
                 except Exception as dl_err:
+                    if effective_cancel_check():
+                        with self._lock:
+                            self._is_loading = False
+                            self._load_event.set()
+                            self._last_error = "Download cancelled by user"
+                        emit_progress("Download cancelled (تم إلغاء التحميل)", None)
+                        return False
                     logger.warning("Download error with progress tracker: %s; falling back to direct load", dl_err)
+
+            if effective_cancel_check():
+                with self._lock:
+                    self._is_loading = False
+                    self._load_event.set()
+                    self._last_error = "Download cancelled by user"
+                emit_progress("Download cancelled (تم إلغاء التحميل)", None)
+                return False
 
             if WhisperModel is None:
                 raise ImportError("faster-whisper is not installed or available.")
@@ -695,11 +754,28 @@ class Transcriber:
             return True
         return self.local_engine.is_model_loaded
 
-    def preload_model(self, on_progress: Callable[..., None] | None = None) -> bool:
+    def preload_model(
+        self,
+        on_progress: Callable[..., None] | None = None,
+        cancel_check: Callable[[], bool] | None = None,
+    ) -> bool:
         """Preload the local model if local engine is active."""
         if self.engine == "local":
-            return self.local_engine.preload_model(on_progress=on_progress)
+            return self.local_engine.preload_model(
+                on_progress=on_progress,
+                cancel_check=cancel_check,
+            )
         return True
+
+    def cancel_download(self) -> None:
+        """Signal ongoing local model download to abort."""
+        if self.engine == "local":
+            self.local_engine.cancel_download()
+
+    def reset_cancel_download(self) -> None:
+        """Reset download cancellation event."""
+        if self.engine == "local":
+            self.local_engine.reset_cancel_download()
 
     def get_active_device_info(self) -> str:
         """Return human-readable device string (e.g. 'GPU (CUDA)' or 'CPU')."""
