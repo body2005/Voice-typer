@@ -52,6 +52,6 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['voicetyper/assets/icon.ico'],
     version='version_info.txt',
+    icon=['voicetyper/assets/icon.ico'],
 )

@@ -49,15 +49,15 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['voicetyper/assets/icon.ico'],
     version='version_info.txt',
+    icon=['voicetyper/assets/icon.ico'],
 )
 coll = COLLECT(
     exe,
     a.binaries,
     a.datas,
     strip=False,
-    upx=True,
+    upx=False,
     upx_exclude=[],
     name='VoiceTyper',
 )

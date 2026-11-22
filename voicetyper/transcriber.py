@@ -154,6 +154,10 @@ def download_model_with_progress(
                 mb_total = self.total / (1024 * 1024)
                 status_text = f"Downloading: {mb_curr:.1f} MB / {mb_total:.1f} MB ({pct:.0f}%)"
                 report(status_text, pct)
+            elif self.n > 0:
+                mb_curr = self.n / (1024 * 1024)
+                status_text = f"Downloading: {mb_curr:.1f} MB..."
+                report(status_text, None)
 
     try:
         kwargs: dict[str, Any] = {
@@ -167,11 +171,20 @@ def download_model_with_progress(
         if cache_dir is not None:
             kwargs["cache_dir"] = cache_dir
 
-        report(f"Connecting to Hugging Face to download '{size_or_id}'...", 0.0)
+        report(f"Connecting to download '{size_or_id}'...", 0.0)
         if cancel_check and cancel_check():
             raise InterruptedError("Model download cancelled by user.")
 
-        model_path = huggingface_hub.snapshot_download(repo_id, **kwargs)
+        try:
+            model_path = huggingface_hub.snapshot_download(repo_id, **kwargs)
+        except Exception as main_err:
+            if cancel_check and cancel_check():
+                raise InterruptedError("Model download cancelled by user.")
+            logger.warning("Primary HuggingFace connection failed (%s); retrying via high-speed mirror (hf-mirror.com)...", main_err)
+            report("Retrying download via high-speed mirror (hf-mirror.com)...", 5.0)
+            kwargs["endpoint"] = "https://hf-mirror.com"
+            model_path = huggingface_hub.snapshot_download(repo_id, **kwargs)
+
         report("Download complete. Initializing model...", 100.0)
         return str(model_path)
     finally:
@@ -291,6 +304,54 @@ def build_system_prompt(language_hint: str = "Auto", custom_vocabulary: str = ""
     return prompt
 
 
+_DETECTED_GPU_NAME: str | None = None
+
+
+def get_gpu_hardware_info() -> str:
+    """Detect installed dedicated or integrated GPU (AMD Radeon, NVIDIA GeForce, Intel Arc)."""
+    global _DETECTED_GPU_NAME
+    if _DETECTED_GPU_NAME is not None:
+        return _DETECTED_GPU_NAME
+
+    # Check CUDA first
+    try:
+        import ctranslate2
+
+        if ctranslate2.get_cuda_device_count() > 0:
+            _DETECTED_GPU_NAME = "NVIDIA CUDA"
+            return _DETECTED_GPU_NAME
+    except Exception:
+        pass
+
+    # Query Windows Video Controllers via powershell
+    try:
+        import subprocess
+
+        out = subprocess.check_output(
+            [
+                "powershell",
+                "-NoProfile",
+                "-Command",
+                "Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name",
+            ],
+            timeout=3,
+        ).decode("utf-8", errors="ignore")
+        gpus = [line.strip() for line in out.splitlines() if line.strip()]
+        for g in gpus:
+            if any(k in g for k in ["Radeon", "GeForce", "RTX", "Arc", "AMD", "NVIDIA"]):
+                clean = g.replace("Radeon ", "").strip()
+                _DETECTED_GPU_NAME = clean
+                return _DETECTED_GPU_NAME
+        if gpus:
+            _DETECTED_GPU_NAME = gpus[0].replace("Radeon ", "").strip()
+            return _DETECTED_GPU_NAME
+    except Exception as e:
+        logger.debug("GPU hardware check error: %s", e)
+
+    _DETECTED_GPU_NAME = ""
+    return _DETECTED_GPU_NAME
+
+
 def get_optimal_device(
     device_pref: str = "auto", compute_type_pref: str = "auto"
 ) -> tuple[str, str, str]:
@@ -321,8 +382,11 @@ def get_optimal_device(
     except Exception as err:
         logger.debug("CUDA check error: %s", err)
 
+    # Detect AMD or other GPU
+    gpu_name = get_gpu_hardware_info()
+    display_label = gpu_name if gpu_name else "CPU"
     ctype = compute_type_pref if compute_type_pref != "auto" else "int8"
-    return "cpu", ctype, "CPU"
+    return "cpu", ctype, display_label
 
 
 class LocalWhisperTranscriber:
@@ -509,7 +573,14 @@ class LocalWhisperTranscriber:
                             self._last_error = "Download cancelled by user"
                         emit_progress("Download cancelled (تم إلغاء التحميل)", None)
                         return False
-                    logger.warning("Download error with progress tracker: %s; falling back to direct load", dl_err)
+                    logger.error("Download error for '%s': %s", self.model_size_or_path, dl_err)
+                    with self._lock:
+                        self._is_loading = False
+                        self._is_downloading = False
+                        self._load_event.set()
+                        self._last_error = str(dl_err)
+                    emit_progress(f"خطأ في التحميل: {dl_err}", None)
+                    return False
 
             if effective_cancel_check():
                 with self._lock:

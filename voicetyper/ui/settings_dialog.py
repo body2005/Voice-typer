@@ -1309,12 +1309,13 @@ class SettingsDialog(QDialog):
         self.model_status_label.setText(status_text)
         is_cancelled = "cancelled" in status_text.lower() or "إلغاء" in status_text
         is_ready = "ready" in status_text.lower() or "✓" in status_text
+        is_error = "error" in status_text.lower() or "خطأ" in status_text or "فشل" in status_text or "failed" in status_text.lower()
 
         if self.overlay is not None and getattr(self.transcriber, "is_downloading", False):
             pct_val = float(progress_pct) if progress_pct is not None else 0.0
             self.overlay.update_download_progress(status_text, pct_val)
 
-        if is_cancelled:
+        if is_cancelled or is_error:
             self.model_progress_bar.hide()
             self.cancel_download_btn.hide()
             self.download_now_btn.show()

@@ -326,7 +326,7 @@ class VoiceTyperTrayApp:
                 QTimer.singleShot(0, self.overlay.cancel_active_download)
             elif "error" in msg.lower() or "خطأ" in msg:
                 QTimer.singleShot(0, lambda m=msg: self.overlay.finish_download(False, m))
-            elif pct is not None and pct > 0:
+            elif pct is not None:
                 QTimer.singleShot(0, lambda m=msg, p=pct: self.overlay.update_download_progress(m, p))
 
         from voicetyper.transcriber import is_model_cached
