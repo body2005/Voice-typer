@@ -291,6 +291,7 @@ def test_is_model_cached_and_preload_feedback() -> None:
 def test_download_model_with_progress_and_cancel() -> None:
     """Verify download_model_with_progress reports byte progress and can be canceled."""
     import pytest
+
     from voicetyper.transcriber import download_model_with_progress
 
     progress_reports: list[tuple[str, float | None]] = []

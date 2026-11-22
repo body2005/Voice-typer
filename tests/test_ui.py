@@ -238,7 +238,7 @@ def test_settings_dialog_microphones_clean_names() -> None:
 
         # Option 0 is Default System Microphone
         assert combo.count() == 3
-        assert combo.itemText(0) == "Default System Microphone"
+        assert combo.itemText(0) in ("Default System Microphone", "ميكروفون النظام الافتراضي")
         assert combo.itemData(0) is None
 
         # Options 1 and 2 are clean names without (Device X)
@@ -360,24 +360,27 @@ def test_theme_preview_widget_and_dialog_states() -> None:
 
 
 def test_settings_dialog_model_cache_labels_and_progress_feedback() -> None:
-    """Verify SettingsDialog displays [Downloaded ✓] tags and updates progress bar."""
+    """Verify SettingsDialog displays dot indicator, clean titles without [Downloaded ✓], and updates progress bar."""
     cfg = Config(transcription_engine="local", whisper_model="large-v3-turbo")
     cfg_mgr = ConfigManager(startup_manager=MockStartupManager())
     overlay = OverlayPill(audio_recorder=None, config=cfg, config_manager=cfg_mgr)
 
     dialog = SettingsDialog(config=cfg, config_manager=cfg_mgr, overlay=overlay)
 
-    # Verify model combo items have status tags
-    found_downloaded = False
+    # Verify model cache dot indicator exists
+    assert hasattr(dialog, "model_cache_dot")
+    assert dialog.model_cache_dot is not None
+
+    # Verify model combo items have icons and clean labels (no '[Downloaded ✓]')
     found_size = False
     for i in range(dialog.whisper_model_combo.count()):
         text = dialog.whisper_model_combo.itemText(i)
-        if "[Downloaded ✓]" in text:
-            found_downloaded = True
+        assert "[Downloaded ✓]" not in text
+        icon = dialog.whisper_model_combo.itemIcon(i)
+        assert not icon.isNull()
         if "MB" in text or "GB" in text:
             found_size = True
 
-    assert found_downloaded is True
     assert found_size is True
 
     # Test progress signal updates
@@ -389,7 +392,7 @@ def test_settings_dialog_model_cache_labels_and_progress_feedback() -> None:
 
     # Test complete progress signal hides progress bar
     dialog._on_model_progress_updated("Model ready ✓", 100.0)
-    assert "ready" in dialog.model_status_label.text().lower()
+    assert "ready" in dialog.model_status_label.text().lower() or "✓" in dialog.model_status_label.text()
     assert dialog.model_progress_bar.isHidden()
     dialog.close()
 

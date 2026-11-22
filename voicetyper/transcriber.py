@@ -373,7 +373,8 @@ class LocalWhisperTranscriber:
         if cancel_check is None:
             effective_cancel_check: Callable[[], bool] = self._cancel_download_event.is_set
         else:
-            effective_cancel_check = lambda: cancel_check() or self._cancel_download_event.is_set()
+            def effective_cancel_check() -> bool:
+                return cancel_check() or self._cancel_download_event.is_set()
 
         def emit_progress(msg: str, pct: float | None = None) -> None:
             if not on_progress:

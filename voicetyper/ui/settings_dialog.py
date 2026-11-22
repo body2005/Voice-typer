@@ -21,7 +21,7 @@ import logging
 from typing import Any
 
 from PyQt6.QtCore import Qt, pyqtSignal, pyqtSlot
-from PyQt6.QtGui import QFont, QIcon, QKeyEvent
+from PyQt6.QtGui import QColor, QFont, QIcon, QKeyEvent, QPainter, QPixmap
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -127,6 +127,119 @@ QFrame#separator {
 }
 """
 
+TEXTS: dict[str, dict[str, str]] = {
+    "ar": {
+        "title": "إعدادات VoiceTyper",
+        "subtitle": "تخصيص تفضيلات الإملاء الصوتي بالضغط للتحدث",
+        "engine_label": "محرك التفريغ الصوتي:",
+        "engine_local": "محلي (faster-whisper) - 100% بدون إنترنت (GPU/CPU)",
+        "engine_cloud": "سحابي (Google Gemini API)",
+        "model_label": "نموذج Whisper المحلي:",
+        "api_key_label_local": "مفتاح Gemini API (اختياري):",
+        "api_key_label_cloud": "مفتاح Gemini API (مطلوب):",
+        "api_key_placeholder_local": "مفتاح Gemini API (اختياري عند استخدام المحرك المحلي)",
+        "api_key_placeholder_cloud": "الصق مفتاح Gemini API من Google AI Studio",
+        "show": "إظهار",
+        "hide": "إخفاء",
+        "test": "تجربة الاتصال",
+        "hotkey_label": "اختصار لوحة المفاتيح:",
+        "record_hotkey": "تسجيل اختصار",
+        "theme_label": "ثيم ومظهر الشريط:",
+        "theme_classic": "الشكل الأصلي - Classic (الافتراضي)",
+        "theme_neon": "نيون زجاجي - Neon Glass Pill",
+        "theme_island": "الجزيرة التفاعلية - Matte Dynamic Island",
+        "theme_mica": "بطاقة ميكا - Fluent Mica Card",
+        "state_recording": "🔴 أثناء التسجيل",
+        "state_processing": "🌊 أثناء المعالجة",
+        "state_error": "⚠️ تنبيه أو خطأ",
+        "state_standby": "⚪ وضع الاستعداد",
+        "mic_label": "الميكروفون:",
+        "mic_default": "ميكروفون النظام الافتراضي",
+        "refresh": "تحديث",
+        "lang_bias_label": "انحياز اللغة:",
+        "lang_auto": "تلقائي (عربي، إنجليزي ومصطلحات مختلطة)",
+        "lang_ar": "عربي (عامية مصرية وفصحى)",
+        "lang_en": "الإنجليزية (English)",
+        "duration_label": "أقصى مدة تسجيل:",
+        "seconds": " ثانية",
+        "casing_label": "تنسيق الحروف الإنجليزية:",
+        "casing_word": "تكبير أول حرف في كل كلمة (Hello World)",
+        "casing_sentence": "تكبير أول حرف في الجملة (Hello world)",
+        "casing_none": "كما هي منطوقة دون تعديل",
+        "vocab_label": "مصطلحات وقاموس مخصص:",
+        "vocab_placeholder": "مصطلحات مفصولة بفواصل (مثل: PySide6, Docker, FastAPI)",
+        "beeps": "تشغيل صوت تنبيه لطيف عند بدء وإيقاف التسجيل",
+        "clipboard": "الاحتفاظ بالنص المفرغ في الحافظة وسجل ويندوز (Win + V)",
+        "startup": "تشغيل VoiceTyper تلقائياً مع بدء تشغيل ويندوز",
+        "typing": "الكتابة بمحاكاة الأحرف (Unicode) بدلاً من اللصق Ctrl+V",
+        "toggle": "وضع التبديل (اضغط مرة لبدء التسجيل، ومرة أخرى للإيقاف)",
+        "reset_pos": "استعادة موضع الشريط",
+        "desktop_shortcut": "أيقونة سطح المكتب 🖥️",
+        "cancel": "إلغاء",
+        "save": "حفظ الإعدادات",
+        "check_cache": "فحص الكاش",
+        "download_model": "تحميل الموديل ⬇",
+        "cancel_download": "إلغاء ⏹",
+        "cached_disk": "الموديل مُحمّل وجاهز على القرص ✓",
+        "not_cached": "غير مُحمّل على القرص ({size}). جاهز للتحميل.",
+    },
+    "en": {
+        "title": "VoiceTyper Settings",
+        "subtitle": "Configure your Push-to-Talk voice dictation preferences",
+        "engine_label": "Transcription Engine:",
+        "engine_local": "Local (faster-whisper) - 100% Offline GPU/CPU",
+        "engine_cloud": "Google Gemini API - Cloud",
+        "model_label": "Local Whisper Model:",
+        "api_key_label_local": "Gemini API Key (Optional):",
+        "api_key_label_cloud": "Gemini API Key (Required):",
+        "api_key_placeholder_local": "Gemini API Key (Optional when using Local Engine)",
+        "api_key_placeholder_cloud": "Paste Gemini API Key from Google AI Studio",
+        "show": "Show",
+        "hide": "Hide",
+        "test": "Test",
+        "hotkey_label": "PTT Hotkey:",
+        "record_hotkey": "Record Hotkey",
+        "theme_label": "Overlay Theme:",
+        "theme_classic": "Classic (Default) - الشكل الأصلي",
+        "theme_neon": "Neon Glass Pill",
+        "theme_island": "Matte Dynamic Island",
+        "theme_mica": "Fluent Mica Card",
+        "state_recording": "🔴 Recording",
+        "state_processing": "🌊 Processing",
+        "state_error": "⚠️ Error",
+        "state_standby": "⚪ Standby",
+        "mic_label": "Microphone:",
+        "mic_default": "Default System Microphone",
+        "refresh": "Refresh",
+        "lang_bias_label": "Language Bias:",
+        "lang_auto": "Auto (Arabic, English & Mixed)",
+        "lang_ar": "Arabic (Egyptian & Modern Standard)",
+        "lang_en": "English",
+        "duration_label": "Max Duration:",
+        "seconds": " seconds",
+        "casing_label": "English Casing:",
+        "casing_word": "Capitalize Every Word (e.g. Hello World)",
+        "casing_sentence": "Capitalize Sentences (e.g. Hello world)",
+        "casing_none": "None (Keep as spoken)",
+        "vocab_label": "Custom Vocabulary:",
+        "vocab_placeholder": "Comma-separated terms (e.g. PySide6, Docker, FastAPI)",
+        "beeps": "Play subtle chime sound on recording start and stop",
+        "clipboard": "Keep transcript in Clipboard & Win+V History",
+        "startup": "Start VoiceTyper automatically when Windows starts",
+        "typing": "Type text via Unicode keystrokes instead of Ctrl+V paste",
+        "toggle": "Toggle dictation mode (press once to start, press again to stop)",
+        "reset_pos": "Reset Overlay Position",
+        "desktop_shortcut": "Desktop Shortcut 🖥️",
+        "cancel": "Cancel",
+        "save": "Save Settings",
+        "check_cache": "Check Cache",
+        "download_model": "Download Model ⬇",
+        "cancel_download": "Cancel ⏹",
+        "cached_disk": "Model cached on disk [Ready to load]",
+        "not_cached": "Not cached ({size}). Ready to download.",
+    },
+}
+
 
 class HotkeyRecorderWidget(QWidget):
     """Interactive hotkey capture widget supporting 1, 2, or 3 key combinations."""
@@ -165,11 +278,11 @@ class HotkeyRecorderWidget(QWidget):
         self.record_btn.setFixedWidth(135)
         self.record_btn.clicked.connect(self._toggle_recording)
 
-        # Presets Dropdown
+        # Presets Dropdown (shows selected preset or blank for custom combinations)
         self.preset_combo = QComboBox()
-        self.preset_combo.addItem("Presets...", "")
+        self.preset_combo.addItem("", "")
         presets = [
-            ("Ctrl + Shift (Default)", "ctrl+shift"),
+            ("Ctrl + Shift", "ctrl+shift"),
             ("Ctrl + Space", "ctrl+space"),
             ("Right Alt (AltGr)", "right alt"),
             ("F8 Key", "f8"),
@@ -196,15 +309,31 @@ class HotkeyRecorderWidget(QWidget):
 
     def set_hotkey(self, hotkey_str: str) -> None:
         """Update hotkey display and stored value."""
-        self._current_hotkey = hotkey_str.strip()
+        self._current_hotkey = hotkey_str.strip().lower()
         self.display_label.setText(format_hotkey_display(self._current_hotkey))
+
+        matched_idx = 0
+        for i in range(1, self.preset_combo.count()):
+            if self.preset_combo.itemData(i) == self._current_hotkey:
+                matched_idx = i
+                break
+        self.preset_combo.blockSignals(True)
+        self.preset_combo.setCurrentIndex(matched_idx)
+        self.preset_combo.blockSignals(False)
         self.hotkey_changed.emit(self._current_hotkey)
 
     def _on_preset_selected(self, index: int) -> None:
-        val = self.preset_combo.itemData(index)
+        val = str(self.preset_combo.itemData(index))
         if val:
             self.set_hotkey(val)
-            self.preset_combo.setCurrentIndex(0)
+
+    def set_language(self, lang: str) -> None:
+        self._lang = lang
+        if self._is_recording:
+            self.record_btn.setText("إلغاء (Esc)" if lang == "ar" else "Cancel (Esc)")
+            self.display_label.setText("اضغط الأزرار... (Esc)" if lang == "ar" else "Press keys... (Esc)")
+        else:
+            self.record_btn.setText("تسجيل اختصار" if lang == "ar" else "Record Hotkey")
 
     def _toggle_recording(self) -> None:
         if self._is_recording:
@@ -247,7 +376,7 @@ class HotkeyRecorderWidget(QWidget):
             "background-color: #2D2F31; color: #FFFFFF; font-weight: bold; "
             "padding: 6px 14px; border-radius: 6px; border: 1px solid #3C4043; min-width: 130px;"
         )
-        self.record_btn.setText("Record Hotkey")
+        self.record_btn.setText("تسجيل اختصار" if getattr(self, "_lang", "ar") == "ar" else "Record Hotkey")
         self.record_btn.setStyleSheet("")
 
     def _stop_listener(self) -> None:
@@ -344,7 +473,7 @@ class HotkeyRecorderWidget(QWidget):
                 self._stop_listener()
                 self._is_recording = False
                 self.set_hotkey(final_str)
-                self.record_btn.setText("Record Hotkey")
+                self.record_btn.setText("تسجيل اختصار" if getattr(self, "_lang", "ar") == "ar" else "Record Hotkey")
                 self.record_btn.setStyleSheet("")
                 self.display_label.setStyleSheet(
                     "background-color: #2D2F31; color: #FFFFFF; font-weight: bold; "
@@ -392,6 +521,23 @@ class HotkeyRecorderWidget(QWidget):
             super().keyPressEvent(event)
 
 
+def create_dot_icon(is_cached: bool) -> QIcon:
+    """Create a high-contrast glowing dot icon for model items."""
+    pix = QPixmap(14, 14)
+    pix.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pix)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    if is_cached:
+        painter.setBrush(QColor("#FF4343"))
+        painter.setPen(QColor("#FF8A80"))
+    else:
+        painter.setBrush(QColor("#5F6368"))
+        painter.setPen(QColor("#3C4043"))
+    painter.drawEllipse(1, 1, 11, 11)
+    painter.end()
+    return QIcon(pix)
+
+
 class SettingsDialog(QDialog):
     """VoiceTyper configuration dialog."""
 
@@ -414,11 +560,12 @@ class SettingsDialog(QDialog):
         self.hotkey_manager = hotkey_manager
         self._initial_theme = getattr(self.config, "overlay_theme", "classic")
         self._current_preview_state = OverlayState.RECORDING
+        self._current_lang = getattr(self.config, "ui_language", "ar") or "ar"
 
         self.model_progress_signal.connect(self._on_model_progress_updated)
 
         self.setWindowTitle("VoiceTyper Settings")
-        self.setMinimumWidth(540)
+        self.setMinimumWidth(560)
         self.setStyleSheet(DARK_STYLESHEET)
 
         # Set window icon if available
@@ -434,13 +581,36 @@ class SettingsDialog(QDialog):
         main_layout.setContentsMargins(24, 24, 24, 24)
         main_layout.setSpacing(18)
 
-        # Title / Header
-        title_label = QLabel("VoiceTyper Settings")
-        title_label.setFont(QFont("Segoe UI", 16, QFont.Weight.Bold))
-        subtitle_label = QLabel("Configure your Push-to-Talk voice dictation preferences")
-        subtitle_label.setStyleSheet("color: #9AA0A6; font-size: 12px;")
-        main_layout.addWidget(title_label)
-        main_layout.addWidget(subtitle_label)
+        # Title / Header with Language Switcher opposite to subtitle
+        header_layout = QHBoxLayout()
+        header_text_vbox = QVBoxLayout()
+        header_text_vbox.setSpacing(4)
+
+        self.title_label = QLabel("VoiceTyper Settings")
+        self.title_label.setFont(QFont("Segoe UI", 16, QFont.Weight.Bold))
+        self.subtitle_label = QLabel("Configure your Push-to-Talk voice dictation preferences")
+        self.subtitle_label.setStyleSheet("color: #9AA0A6; font-size: 12px;")
+        header_text_vbox.addWidget(self.title_label)
+        header_text_vbox.addWidget(self.subtitle_label)
+        header_layout.addLayout(header_text_vbox)
+
+        header_layout.addStretch()
+
+        # Language switcher placed opposite to subtitle in header
+        lang_switch_box = QHBoxLayout()
+        lang_switch_box.setSpacing(6)
+        self.lang_icon_label = QLabel("🌐")
+        self.lang_icon_label.setStyleSheet("font-size: 15px;")
+        self.ui_lang_combo = QComboBox()
+        self.ui_lang_combo.setFixedWidth(110)
+        self.ui_lang_combo.addItem("العربية", "ar")
+        self.ui_lang_combo.addItem("English", "en")
+        self.ui_lang_combo.currentIndexChanged.connect(self._on_ui_lang_selected)
+        lang_switch_box.addWidget(self.lang_icon_label)
+        lang_switch_box.addWidget(self.ui_lang_combo)
+        header_layout.addLayout(lang_switch_box)
+
+        main_layout.addLayout(header_layout)
 
         sep = QFrame()
         sep.setObjectName("separator")
@@ -453,10 +623,11 @@ class SettingsDialog(QDialog):
 
         # 1. Transcription Engine
         self.engine_combo = QComboBox()
-        self.engine_combo.addItem("Local (faster-whisper) - 100% Offline GPU/CPU", "local")
-        self.engine_combo.addItem("Google Gemini API - Cloud", "gemini")
+        self.engine_combo.addItem("محلي (faster-whisper) - 100% بدون إنترنت (GPU/CPU)", "local")
+        self.engine_combo.addItem("سحابي (Google Gemini API)", "gemini")
         self.engine_combo.currentIndexChanged.connect(self._on_engine_changed)
-        form_layout.addRow("Transcription Engine:", self.engine_combo)
+        self.engine_row_label = QLabel("محرك التفريغ الصوتي:")
+        form_layout.addRow(self.engine_row_label, self.engine_combo)
 
         # 2. Local Whisper Model & Hardware Info
         self.whisper_container = QWidget()
@@ -471,6 +642,12 @@ class SettingsDialog(QDialog):
         self.whisper_model_combo = QComboBox()
         self.whisper_model_combo.currentIndexChanged.connect(self._on_whisper_model_changed)
         model_row.addWidget(self.whisper_model_combo)
+
+        # Model cache indicator dot (vibrant red when cached, gray when not)
+        self.model_cache_dot = QLabel()
+        self.model_cache_dot.setObjectName("modelCacheDot")
+        self.model_cache_dot.setFixedSize(16, 16)
+        model_row.addWidget(self.model_cache_dot)
 
         # Hardware readout badge
         _, _, dev_label = get_optimal_device()
@@ -494,7 +671,7 @@ class SettingsDialog(QDialog):
 
         status_row.addStretch()
 
-        self.download_now_btn = QPushButton("Download Model ⬇")
+        self.download_now_btn = QPushButton("تحميل الموديل ⬇")
         self.download_now_btn.setFixedHeight(22)
         self.download_now_btn.setStyleSheet(
             "QPushButton { font-size: 11px; padding: 2px 8px; background-color: #1A73E8; color: #FFFFFF; border-radius: 3px; border: none; font-weight: bold; }"
@@ -504,7 +681,7 @@ class SettingsDialog(QDialog):
         self.download_now_btn.hide()
         status_row.addWidget(self.download_now_btn)
 
-        self.cancel_download_btn = QPushButton("Cancel ⏹")
+        self.cancel_download_btn = QPushButton("إلغاء ⏹")
         self.cancel_download_btn.setFixedHeight(22)
         self.cancel_download_btn.setStyleSheet(
             "QPushButton { font-size: 11px; padding: 2px 8px; background-color: #C5221F; color: #FFFFFF; border-radius: 3px; border: none; font-weight: bold; }"
@@ -515,7 +692,7 @@ class SettingsDialog(QDialog):
         self.cancel_download_btn.hide()
         status_row.addWidget(self.cancel_download_btn)
 
-        self.refresh_cache_btn = QPushButton("Check Cache")
+        self.refresh_cache_btn = QPushButton("فحص الكاش")
         self.refresh_cache_btn.setFixedHeight(22)
         self.refresh_cache_btn.setStyleSheet(
             "font-size: 11px; padding: 2px 8px; background-color: #2D2F31; border: 1px solid #3C4043; color: #E8EAED;"
@@ -536,7 +713,8 @@ class SettingsDialog(QDialog):
         self.model_progress_bar.hide()
         whisper_layout.addWidget(self.model_progress_bar)
 
-        form_layout.addRow("Local Whisper Model:", self.whisper_container)
+        self.model_row_label = QLabel("نموذج Whisper المحلي:")
+        form_layout.addRow(self.model_row_label, self.whisper_container)
 
         # 3. Gemini API Key (Required for Gemini, Optional for Local)
         self.key_container = QWidget()
@@ -546,21 +724,21 @@ class SettingsDialog(QDialog):
 
         self.api_key_input = QLineEdit()
         self.api_key_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self.api_key_input.setPlaceholderText("Gemini API Key (Optional when using Local Engine)")
+        self.api_key_input.setPlaceholderText("مفتاح Gemini API (اختياري عند استخدام المحرك المحلي)")
 
-        self.toggle_key_btn = QPushButton("Show")
+        self.toggle_key_btn = QPushButton("إظهار")
         self.toggle_key_btn.setFixedWidth(60)
         self.toggle_key_btn.clicked.connect(self._toggle_api_key_visibility)
 
-        self.test_key_btn = QPushButton("Test")
-        self.test_key_btn.setFixedWidth(60)
+        self.test_key_btn = QPushButton("تجربة الاتصال")
+        self.test_key_btn.setFixedWidth(100)
         self.test_key_btn.clicked.connect(self._test_api_key)
 
         key_layout.addWidget(self.api_key_input)
         key_layout.addWidget(self.toggle_key_btn)
         key_layout.addWidget(self.test_key_btn)
 
-        self.api_key_row_label = QLabel("Gemini API Key:")
+        self.api_key_row_label = QLabel("مفتاح Gemini API:")
         form_layout.addRow(self.api_key_row_label, self.key_container)
 
         # 4. Global Hotkey (Interactive Keyboard Recorder)
@@ -568,7 +746,8 @@ class SettingsDialog(QDialog):
             current_hotkey=self.config.hotkey,
             hotkey_manager=self.hotkey_manager,
         )
-        form_layout.addRow("PTT Hotkey:", self.hotkey_recorder)
+        self.hotkey_row_label = QLabel("اختصار لوحة المفاتيح:")
+        form_layout.addRow(self.hotkey_row_label, self.hotkey_recorder)
 
         # 5. Overlay Theme (Interactive Live Preview)
         theme_container = QWidget()
@@ -577,10 +756,10 @@ class SettingsDialog(QDialog):
         theme_vbox.setSpacing(8)
 
         self.theme_combo = QComboBox()
-        self.theme_combo.addItem("Classic (Default) - الشكل الأصلي", "classic")
-        self.theme_combo.addItem("Neon Glass Pill (Image 1)", "neon_glass")
-        self.theme_combo.addItem("Matte Dynamic Island (Image 2)", "matte_island")
-        self.theme_combo.addItem("Fluent Mica Card (Image 3)", "fluent_mica")
+        self.theme_combo.addItem("الشكل الأصلي - Classic (الافتراضي)", "classic")
+        self.theme_combo.addItem("نيون زجاجي - Neon Glass Pill", "neon_glass")
+        self.theme_combo.addItem("الجزيرة التفاعلية - Matte Dynamic Island", "matte_island")
+        self.theme_combo.addItem("بطاقة ميكا - Fluent Mica Card", "fluent_mica")
         self.theme_combo.currentIndexChanged.connect(self._on_theme_changed)
         theme_vbox.addWidget(self.theme_combo)
 
@@ -609,10 +788,10 @@ class SettingsDialog(QDialog):
 
         self.state_btns: dict[OverlayState, QPushButton] = {}
         preview_states = [
-            (OverlayState.RECORDING, "🔴 Recording"),
-            (OverlayState.PROCESSING, "🌊 Processing"),
-            (OverlayState.ERROR, "⚠️ Error"),
-            (OverlayState.STANDBY, "⚪ Standby"),
+            (OverlayState.RECORDING, "🔴 أثناء التسجيل"),
+            (OverlayState.PROCESSING, "🌊 أثناء المعالجة"),
+            (OverlayState.ERROR, "⚠️ تنبيه أو خطأ"),
+            (OverlayState.STANDBY, "⚪ وضع الاستعداد"),
         ]
         for st, label in preview_states:
             btn = QPushButton(label)
@@ -625,48 +804,54 @@ class SettingsDialog(QDialog):
         p_layout.addLayout(state_bar)
         theme_vbox.addWidget(preview_frame)
 
-        form_layout.addRow("Overlay Theme:", theme_container)
+        self.theme_row_label = QLabel("ثيم ومظهر الشريط:")
+        form_layout.addRow(self.theme_row_label, theme_container)
 
-        # 5. Microphone Selector
+        # 6. Microphone Selector
         mic_container = QWidget()
         mic_layout = QHBoxLayout(mic_container)
         mic_layout.setContentsMargins(0, 0, 0, 0)
         mic_layout.setSpacing(8)
 
         self.mic_combo = QComboBox()
-        self.refresh_mic_btn = QPushButton("Refresh")
+        self.refresh_mic_btn = QPushButton("تحديث")
         self.refresh_mic_btn.setFixedWidth(70)
         self.refresh_mic_btn.clicked.connect(self._refresh_microphones)
 
         mic_layout.addWidget(self.mic_combo)
         mic_layout.addWidget(self.refresh_mic_btn)
 
-        form_layout.addRow("Microphone:", mic_container)
+        self.mic_row_label = QLabel("الميكروفون:")
+        form_layout.addRow(self.mic_row_label, mic_container)
 
-        # 6. Language Hint
+        # 7. Language Hint
         self.lang_combo = QComboBox()
-        self.lang_combo.addItem("Auto (Arabic, English & Mixed)", "Auto")
-        self.lang_combo.addItem("Arabic (Egyptian & Modern Standard)", "Arabic")
-        self.lang_combo.addItem("English", "English")
-        form_layout.addRow("Language Bias:", self.lang_combo)
+        self.lang_combo.addItem("تلقائي (عربي، إنجليزي ومصطلحات مختلطة)", "Auto")
+        self.lang_combo.addItem("عربي (عامية مصرية وفصحى)", "Arabic")
+        self.lang_combo.addItem("الإنجليزية (English)", "English")
+        self.lang_bias_row_label = QLabel("انحياز اللغة:")
+        form_layout.addRow(self.lang_bias_row_label, self.lang_combo)
 
-        # 7. Max Recording Duration
+        # 8. Max Recording Duration
         self.duration_spin = QSpinBox()
         self.duration_spin.setRange(10, 300)
-        self.duration_spin.setSuffix(" seconds")
-        form_layout.addRow("Max Duration:", self.duration_spin)
+        self.duration_spin.setSuffix(" ثانية")
+        self.duration_row_label = QLabel("أقصى مدة تسجيل:")
+        form_layout.addRow(self.duration_row_label, self.duration_spin)
 
-        # 8. English Capitalization
+        # 9. English Capitalization
         self.capitalization_combo = QComboBox()
-        self.capitalization_combo.addItem("Capitalize Every Word (e.g. Hello World)", "word")
-        self.capitalization_combo.addItem("Capitalize Sentences (e.g. Hello world. How are you)", "sentence")
-        self.capitalization_combo.addItem("None (Keep as spoken)", "none")
-        form_layout.addRow("English Casing:", self.capitalization_combo)
+        self.capitalization_combo.addItem("تكبير أول حرف في كل كلمة (Hello World)", "word")
+        self.capitalization_combo.addItem("تكبير أول حرف في الجملة (Hello world)", "sentence")
+        self.capitalization_combo.addItem("كما هي منطوقة دون تعديل", "none")
+        self.casing_row_label = QLabel("تنسيق الحروف الإنجليزية:")
+        form_layout.addRow(self.casing_row_label, self.capitalization_combo)
 
-        # 9. Custom Vocabulary
+        # 10. Custom Vocabulary
         self.vocab_input = QLineEdit()
-        self.vocab_input.setPlaceholderText("Comma-separated terms (e.g. PySide6, Docker, FastAPI)")
-        form_layout.addRow("Custom Vocabulary:", self.vocab_input)
+        self.vocab_input.setPlaceholderText("مصطلحات مفصولة بفواصل (مثل: PySide6, Docker, FastAPI)")
+        self.vocab_row_label = QLabel("قاموس مخصص:")
+        form_layout.addRow(self.vocab_row_label, self.vocab_input)
 
         main_layout.addLayout(form_layout)
 
@@ -674,11 +859,11 @@ class SettingsDialog(QDialog):
         check_layout = QVBoxLayout()
         check_layout.setSpacing(10)
 
-        self.beeps_checkbox = QCheckBox("Play subtle chime sound on recording start and stop")
-        self.clipboard_keep_checkbox = QCheckBox("Keep transcript in Clipboard & Win+V History")
-        self.startup_checkbox = QCheckBox("Start VoiceTyper automatically when Windows starts")
-        self.typing_checkbox = QCheckBox("Type text via Unicode keystrokes instead of Ctrl+V paste")
-        self.toggle_checkbox = QCheckBox("Toggle dictation mode (press once to start, press again to stop)")
+        self.beeps_checkbox = QCheckBox("تشغيل صوت تنبيه لطيف عند بدء وإيقاف التسجيل")
+        self.clipboard_keep_checkbox = QCheckBox("الاحتفاظ بالنص المفرغ في الحافظة وسجل ويندوز (Win + V)")
+        self.startup_checkbox = QCheckBox("تشغيل VoiceTyper تلقائياً مع بدء تشغيل ويندوز")
+        self.typing_checkbox = QCheckBox("الكتابة بمحاكاة الأحرف (Unicode) بدلاً من اللصق Ctrl+V")
+        self.toggle_checkbox = QCheckBox("وضع التبديل (اضغط مرة لبدء التسجيل، ومرة أخرى للإيقاف)")
 
         check_layout.addWidget(self.beeps_checkbox)
         check_layout.addWidget(self.clipboard_keep_checkbox)
@@ -690,27 +875,148 @@ class SettingsDialog(QDialog):
         # Action Buttons (Reset Position / Cancel / Save)
         btn_layout = QHBoxLayout()
 
-        reset_pos_btn = QPushButton("Reset Overlay Position")
-        reset_pos_btn.clicked.connect(self._reset_overlay_position)
-        btn_layout.addWidget(reset_pos_btn)
+        self.reset_pos_btn = QPushButton("استعادة موضع الشريط")
+        self.reset_pos_btn.clicked.connect(self._reset_overlay_position)
+        btn_layout.addWidget(self.reset_pos_btn)
 
-        desktop_shortcut_btn = QPushButton("Desktop Shortcut 🖥️")
-        desktop_shortcut_btn.setToolTip("Create or refresh VoiceTyper shortcut on your Windows Desktop")
-        desktop_shortcut_btn.clicked.connect(self._create_desktop_shortcut)
-        btn_layout.addWidget(desktop_shortcut_btn)
+        self.desktop_shortcut_btn = QPushButton("أيقونة سطح المكتب 🖥️")
+        self.desktop_shortcut_btn.setToolTip("إنشاء أو تحديث اختصار VoiceTyper على سطح المكتب")
+        self.desktop_shortcut_btn.clicked.connect(self._create_desktop_shortcut)
+        btn_layout.addWidget(self.desktop_shortcut_btn)
 
         btn_layout.addStretch()
 
-        cancel_btn = QPushButton("Cancel")
-        cancel_btn.clicked.connect(self.reject)
+        self.cancel_btn = QPushButton("إلغاء")
+        self.cancel_btn.clicked.connect(self.reject)
 
-        save_btn = QPushButton("Save Settings")
-        save_btn.setObjectName("primaryButton")
-        save_btn.clicked.connect(self._save_and_close)
+        self.save_btn = QPushButton("حفظ الإعدادات")
+        self.save_btn.setObjectName("primaryButton")
+        self.save_btn.clicked.connect(self._save_and_close)
 
-        btn_layout.addWidget(cancel_btn)
-        btn_layout.addWidget(save_btn)
+        btn_layout.addWidget(self.cancel_btn)
+        btn_layout.addWidget(self.save_btn)
         main_layout.addLayout(btn_layout)
+
+    def _on_ui_lang_selected(self, index: int) -> None:
+        """Handle language switcher change."""
+        lang = str(self.ui_lang_combo.itemData(index) or "ar")
+        self._apply_language(lang)
+
+    def _apply_language(self, lang: str) -> None:
+        """Dynamically update all UI text and layout direction for Arabic / English."""
+        self._current_lang = lang
+        t = TEXTS.get(lang, TEXTS["ar"])
+
+        # Layout direction
+        if lang == "ar":
+            self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        else:
+            self.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+
+        # Window & Header
+        self.setWindowTitle(t["title"])
+        self.title_label.setText(t["title"])
+        self.subtitle_label.setText(t["subtitle"])
+
+        # Form Labels
+        self.engine_row_label.setText(t["engine_label"])
+        self.model_row_label.setText(t["model_label"])
+        curr_engine = str(self.engine_combo.currentData())
+        if curr_engine == "local":
+            self.api_key_row_label.setText(t["api_key_label_local"])
+            self.api_key_input.setPlaceholderText(t["api_key_placeholder_local"])
+        else:
+            self.api_key_row_label.setText(t["api_key_label_cloud"])
+            self.api_key_input.setPlaceholderText(t["api_key_placeholder_cloud"])
+
+        self.hotkey_row_label.setText(t["hotkey_label"])
+        self.theme_row_label.setText(t["theme_label"])
+        self.mic_row_label.setText(t["mic_label"])
+        self.lang_bias_row_label.setText(t["lang_bias_label"])
+        self.duration_row_label.setText(t["duration_label"])
+        self.casing_row_label.setText(t["casing_label"])
+        self.vocab_row_label.setText(t["vocab_label"])
+        self.vocab_input.setPlaceholderText(t["vocab_placeholder"])
+
+        # Combobox items
+        self.engine_combo.setItemText(0, t["engine_local"])
+        self.engine_combo.setItemText(1, t["engine_cloud"])
+
+        self.theme_combo.setItemText(0, t["theme_classic"])
+        self.theme_combo.setItemText(1, t["theme_neon"])
+        self.theme_combo.setItemText(2, t["theme_island"])
+        self.theme_combo.setItemText(3, t["theme_mica"])
+
+        self.lang_combo.setItemText(0, t["lang_auto"])
+        self.lang_combo.setItemText(1, t["lang_ar"])
+        self.lang_combo.setItemText(2, t["lang_en"])
+
+        self.capitalization_combo.setItemText(0, t["casing_word"])
+        self.capitalization_combo.setItemText(1, t["casing_sentence"])
+        self.capitalization_combo.setItemText(2, t["casing_none"])
+
+        self.duration_spin.setSuffix(t["seconds"])
+
+        # Buttons
+        if self.api_key_input.echoMode() == QLineEdit.EchoMode.Password:
+            self.toggle_key_btn.setText(t["show"])
+        else:
+            self.toggle_key_btn.setText(t["hide"])
+        self.test_key_btn.setText(t["test"])
+        self.download_now_btn.setText(t["download_model"])
+        self.cancel_download_btn.setText(t["cancel_download"])
+        self.refresh_cache_btn.setText(t["check_cache"])
+        self.refresh_mic_btn.setText(t["refresh"])
+        self.reset_pos_btn.setText(t["reset_pos"])
+        self.desktop_shortcut_btn.setText(t["desktop_shortcut"])
+        self.cancel_btn.setText(t["cancel"])
+        self.save_btn.setText(t["save"])
+
+        # Checkboxes
+        self.beeps_checkbox.setText(t["beeps"])
+        self.clipboard_keep_checkbox.setText(t["clipboard"])
+        self.startup_checkbox.setText(t["startup"])
+        self.typing_checkbox.setText(t["typing"])
+        self.toggle_checkbox.setText(t["toggle"])
+
+        # Preview buttons
+        if hasattr(self, "state_btns"):
+            self.state_btns[OverlayState.RECORDING].setText(t["state_recording"])
+            self.state_btns[OverlayState.PROCESSING].setText(t["state_processing"])
+            self.state_btns[OverlayState.ERROR].setText(t["state_error"])
+            self.state_btns[OverlayState.STANDBY].setText(t["state_standby"])
+
+        # Hotkey recorder
+        if hasattr(self, "hotkey_recorder"):
+            self.hotkey_recorder.set_language(lang)
+
+        # Refresh model items & cache dot
+        self._refresh_model_cache_labels()
+
+    def _update_model_cache_dot(self, is_cached: bool) -> None:
+        """Update cache dot indicator style (vibrant glowing red when cached, gray when not)."""
+        lang = getattr(self, "_current_lang", "ar")
+        if is_cached:
+            self.model_cache_dot.setStyleSheet(
+                "min-width: 16px; max-width: 16px; min-height: 16px; max-height: 16px; "
+                "border-radius: 8px; background: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5, "
+                "stop:0 #FF5252, stop:0.6 #E53935, stop:1.0 #B71C1C); border: 1px solid #FF8A80;"
+            )
+            self.model_cache_dot.setToolTip(
+                "الموديل مُحمّل على الجهاز وجاهز للاستخدام الفوري"
+                if lang == "ar"
+                else "Model is downloaded and cached on disk"
+            )
+        else:
+            self.model_cache_dot.setStyleSheet(
+                "min-width: 16px; max-width: 16px; min-height: 16px; max-height: 16px; "
+                "border-radius: 8px; background-color: #5F6368; border: 1px solid #3C4043;"
+            )
+            self.model_cache_dot.setToolTip(
+                "الموديل غير مُحمّل على الجهاز - يتطلب التنزيل"
+                if lang == "ar"
+                else "Model is not cached - download required"
+            )
 
     def _on_theme_changed(self, index: int) -> None:
         """Apply theme immediately for live preview on both widget and desktop overlay."""
@@ -760,17 +1066,18 @@ class SettingsDialog(QDialog):
     def _on_engine_changed(self, index: int) -> None:
         """Update UI fields based on active transcription engine."""
         engine = self.engine_combo.itemData(index)
+        t = TEXTS.get(getattr(self, "_current_lang", "ar"), TEXTS["ar"])
         if engine == "local":
             self.whisper_container.setEnabled(True)
-            self.api_key_row_label.setText("Gemini API Key (Optional):")
-            self.api_key_input.setPlaceholderText("Gemini API Key (Optional for Local Engine)")
+            self.api_key_row_label.setText(t["api_key_label_local"])
+            self.api_key_input.setPlaceholderText(t["api_key_placeholder_local"])
         else:
             self.whisper_container.setEnabled(False)
-            self.api_key_row_label.setText("Gemini API Key (Required):")
-            self.api_key_input.setPlaceholderText("Paste Gemini API Key from Google AI Studio")
+            self.api_key_row_label.setText(t["api_key_label_cloud"])
+            self.api_key_input.setPlaceholderText(t["api_key_placeholder_cloud"])
 
     def _refresh_model_cache_labels(self) -> None:
-        """Populate or update model items showing [Downloaded ✓] vs download size."""
+        """Populate or update model items showing red/gray dot indicators and sizes without text tags."""
         current_data = (
             self.whisper_model_combo.currentData()
             if self.whisper_model_combo.count() > 0
@@ -781,9 +1088,9 @@ class SettingsDialog(QDialog):
 
         for model_id, title, size in MODELS_CATALOG:
             cached = is_model_cached(model_id)
-            tag = "[Downloaded ✓]" if cached else f"({size})"
-            display_text = f"{title} {tag}"
-            self.whisper_model_combo.addItem(display_text, model_id)
+            dot_icon = create_dot_icon(cached)
+            display_text = title if cached else f"{title} ({size})"
+            self.whisper_model_combo.addItem(dot_icon, display_text, model_id)
 
         idx = self.whisper_model_combo.findData(current_data)
         if idx >= 0:
@@ -793,8 +1100,12 @@ class SettingsDialog(QDialog):
         self.whisper_model_combo.blockSignals(False)
 
         sel_model = str(self.whisper_model_combo.currentData())
-        if is_model_cached(sel_model):
-            self.model_status_label.setText("Model cached on disk [Ready to load]")
+        is_cached = is_model_cached(sel_model)
+        self._update_model_cache_dot(is_cached)
+
+        t = TEXTS.get(getattr(self, "_current_lang", "ar"), TEXTS["ar"])
+        if is_cached:
+            self.model_status_label.setText(t["cached_disk"])
             self.model_progress_bar.hide()
             self.download_now_btn.hide()
             self.cancel_download_btn.hide()
@@ -804,21 +1115,24 @@ class SettingsDialog(QDialog):
                 if m == sel_model:
                     sz = s
                     break
-            self.model_status_label.setText(f"Not cached ({sz}). Ready to download.")
+            self.model_status_label.setText(t["not_cached"].format(size=sz))
             self.download_now_btn.show()
             self.download_now_btn.setEnabled(True)
             self.model_progress_bar.hide()
             self.cancel_download_btn.hide()
 
     def _on_whisper_model_changed(self, index: int) -> None:
-        """Handle user selecting a different Whisper model with status label update."""
+        """Handle user selecting a different Whisper model with status label and cache dot update."""
         model_id = str(self.whisper_model_combo.itemData(index))
         if not model_id:
             return
 
-        cached = is_model_cached(model_id)
-        if cached:
-            self.model_status_label.setText("Model cached on disk [Ready to load]")
+        is_cached = is_model_cached(model_id)
+        self._update_model_cache_dot(is_cached)
+
+        t = TEXTS.get(getattr(self, "_current_lang", "ar"), TEXTS["ar"])
+        if is_cached:
+            self.model_status_label.setText(t["cached_disk"])
             self.model_progress_bar.hide()
             self.download_now_btn.hide()
             self.cancel_download_btn.hide()
@@ -828,7 +1142,7 @@ class SettingsDialog(QDialog):
                 if m == model_id:
                     sz = s
                     break
-            self.model_status_label.setText(f"Not cached ({sz}). Ready to download.")
+            self.model_status_label.setText(t["not_cached"].format(size=sz))
             self.download_now_btn.show()
             self.download_now_btn.setEnabled(True)
             self.model_progress_bar.hide()
@@ -837,9 +1151,11 @@ class SettingsDialog(QDialog):
     def _start_manual_download(self) -> None:
         """Trigger background download of the selected model with progress and cancellation."""
         sel_model = str(self.whisper_model_combo.currentData())
+        t = TEXTS.get(getattr(self, "_current_lang", "ar"), TEXTS["ar"])
         if is_model_cached(sel_model):
-            self.model_status_label.setText("Model already cached on disk ✓")
+            self.model_status_label.setText(t["cached_disk"])
             self.download_now_btn.hide()
+            self._update_model_cache_dot(True)
             return
 
         if self.transcriber is not None:
@@ -848,12 +1164,17 @@ class SettingsDialog(QDialog):
 
         self.download_now_btn.hide()
         self.cancel_download_btn.setEnabled(True)
-        self.cancel_download_btn.setText("Cancel ⏹")
+        self.cancel_download_btn.setText(t["cancel_download"])
         self.cancel_download_btn.show()
         self.model_progress_bar.show()
         self.model_progress_bar.setRange(0, 100)
         self.model_progress_bar.setValue(0)
-        self.model_status_label.setText(f"Connecting to Hugging Face to download '{sel_model}'...")
+        connecting_msg = (
+            f"جاري الاتصال بـ Hugging Face لتحميل '{sel_model}'..."
+            if getattr(self, "_current_lang", "ar") == "ar"
+            else f"Connecting to Hugging Face to download '{sel_model}'..."
+        )
+        self.model_status_label.setText(connecting_msg)
 
         import threading
 
@@ -870,9 +1191,10 @@ class SettingsDialog(QDialog):
         """Cancel ongoing model download immediately."""
         if self.transcriber is not None:
             self.transcriber.cancel_download()
+        is_ar = getattr(self, "_current_lang", "ar") == "ar"
         self.cancel_download_btn.setEnabled(False)
-        self.cancel_download_btn.setText("Cancelling...")
-        self.model_status_label.setText("Cancelling download... (جاري الإلغاء)")
+        self.cancel_download_btn.setText("جاري الإلغاء..." if is_ar else "Cancelling...")
+        self.model_status_label.setText("جاري إلغاء التحميل..." if is_ar else "Cancelling download...")
 
     @pyqtSlot(str, object)
     def _on_model_progress_updated(self, status_text: str, progress_pct: float | None) -> None:
@@ -914,14 +1236,14 @@ class SettingsDialog(QDialog):
 
     def _refresh_microphones(self) -> None:
         """Scan and populate available input devices with clean, deduplicated names."""
+        t = TEXTS.get(getattr(self, "_current_lang", "ar"), TEXTS["ar"])
         self.mic_combo.clear()
-        self.mic_combo.addItem("Default System Microphone", None)
+        self.mic_combo.addItem(t["mic_default"], None)
 
         devices = AudioRecorder.get_input_devices()
         selected_index = 0
 
         for dev in devices:
-            # Clean label without any "(Device X)" suffix
             label = dev["name"]
             self.mic_combo.addItem(label, dev["index"])
             if self.config.mic_device == dev["index"] or (
@@ -933,6 +1255,15 @@ class SettingsDialog(QDialog):
 
     def _load_values(self) -> None:
         """Populate widgets with current Config values."""
+        # UI Language (Default Arabic "ar")
+        ui_lang = getattr(self.config, "ui_language", "ar") or "ar"
+        idx_lang = self.ui_lang_combo.findData(ui_lang)
+        if idx_lang >= 0:
+            self.ui_lang_combo.setCurrentIndex(idx_lang)
+        else:
+            self.ui_lang_combo.setCurrentIndex(0)
+        self._apply_language(ui_lang)
+
         # Engine
         idx = self.engine_combo.findData(self.config.transcription_engine)
         if idx >= 0:
@@ -996,42 +1327,61 @@ class SettingsDialog(QDialog):
         self.toggle_checkbox.setChecked(self.config.toggle_mode)
 
     def _toggle_api_key_visibility(self) -> None:
+        t = TEXTS.get(getattr(self, "_current_lang", "ar"), TEXTS["ar"])
         if self.api_key_input.echoMode() == QLineEdit.EchoMode.Password:
             self.api_key_input.setEchoMode(QLineEdit.EchoMode.Normal)
-            self.toggle_key_btn.setText("Hide")
+            self.toggle_key_btn.setText(t["hide"])
         else:
             self.api_key_input.setEchoMode(QLineEdit.EchoMode.Password)
-            self.toggle_key_btn.setText("Show")
+            self.toggle_key_btn.setText(t["show"])
 
     def _test_api_key(self) -> None:
         """Quickly test API key connectivity with Gemini."""
         key = self.api_key_input.text().strip()
+        is_ar = getattr(self, "_current_lang", "ar") == "ar"
         if not key:
-            QMessageBox.warning(self, "API Key Missing", "Please enter an API key first.")
+            QMessageBox.warning(
+                self,
+                "مفتاح API مفقود" if is_ar else "API Key Missing",
+                "يرجى إدخال مفتاح Gemini API أولاً." if is_ar else "Please enter an API key first.",
+            )
             return
 
         self.test_key_btn.setEnabled(False)
-        self.test_key_btn.setText("Testing...")
+        self.test_key_btn.setText("جاري الفحص..." if is_ar else "Testing...")
 
         try:
             transcriber = Transcriber(api_key=key, engine="gemini")
             client = transcriber._get_client()
             _ = client.models.get(model=transcriber.model_name)
-            QMessageBox.information(self, "API Key Valid", "Gemini API key is valid and connected successfully!")
+            QMessageBox.information(
+                self,
+                "تم الاتصال بنجاح" if is_ar else "API Key Valid",
+                "مفتاح Gemini API صالح وتم الاتصال بالسيرفر بنجاح!"
+                if is_ar
+                else "Gemini API key is valid and connected successfully!",
+            )
         except Exception as err:
-            QMessageBox.critical(self, "API Key Failed", f"Validation failed:\n{err}")
+            QMessageBox.critical(
+                self,
+                "فشل الاتصال" if is_ar else "API Key Failed",
+                f"فشل التحقق من المفتاح:\n{err}" if is_ar else f"Validation failed:\n{err}",
+            )
         finally:
             self.test_key_btn.setEnabled(True)
-            self.test_key_btn.setText("Test")
+            self.test_key_btn.setText("تجربة الاتصال" if is_ar else "Test")
 
     def _reset_overlay_position(self) -> None:
         """Reset pill position to bottom-right above taskbar clock."""
         self.config_manager.reset_overlay_position()
         self.config.overlay_pos = None
+        is_ar = getattr(self, "_current_lang", "ar") == "ar"
         QMessageBox.information(
             self,
-            "Position Reset",
-            "Overlay position reset to default (bottom-right above the taskbar clock).",
+            "استعادة الموضع" if is_ar else "Position Reset",
+            "تمت استعادة موضع الشريط إلى الوضع الافتراضي (أسفل يمين الشاشة فوق الساعة)."
+            if is_ar
+            else "Overlay position reset to default (bottom-right above the taskbar clock).",
         )
 
     def _create_desktop_shortcut(self) -> None:
@@ -1039,6 +1389,7 @@ class SettingsDialog(QDialog):
         try:
             import os
             import sys
+
             import winshell
             from win32com.client import Dispatch
 
@@ -1075,14 +1426,14 @@ class SettingsDialog(QDialog):
 
             QMessageBox.information(
                 self,
-                "Desktop Shortcut",
-                "Desktop shortcut created successfully on your Windows Desktop!\n\nتم إنشاء اختصار VoiceTyper على سطح المكتب بنجاح.",
+                "اختصار سطح المكتب" if getattr(self, "_current_lang", "ar") == "ar" else "Desktop Shortcut",
+                "تم إنشاء اختصار VoiceTyper على سطح المكتب بنجاح!\n\nDesktop shortcut created successfully.",
             )
         except Exception as err:
             QMessageBox.warning(
                 self,
-                "Desktop Shortcut Error",
-                f"Failed to create desktop shortcut:\n{err}",
+                "خطأ في الاختصار" if getattr(self, "_current_lang", "ar") == "ar" else "Desktop Shortcut Error",
+                f"فشل إنشاء اختصار سطح المكتب:\n{err}",
             )
 
     def _save_and_close(self) -> None:
@@ -1121,6 +1472,7 @@ class SettingsDialog(QDialog):
                     threading.Thread(target=bg_load, name="SettingsModelLoader", daemon=True).start()
 
         # Update config fields
+        self.config.ui_language = str(self.ui_lang_combo.currentData() or "ar")
         self.config.transcription_engine = engine
         self.config.whisper_model = new_model
         self.config.overlay_theme = str(self.theme_combo.currentData())
@@ -1143,7 +1495,8 @@ class SettingsDialog(QDialog):
         if self.overlay is not None:
             self.overlay.show_standby()
         logger.info(
-            "Saved settings successfully (engine=%s, model=%s, hotkey=%s)",
+            "Saved settings successfully (lang=%s, engine=%s, model=%s, hotkey=%s)",
+            self.config.ui_language,
             self.config.transcription_engine,
             self.config.whisper_model,
             self.config.hotkey,

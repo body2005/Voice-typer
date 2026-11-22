@@ -42,6 +42,7 @@ class Config:
     custom_vocabulary: str = ""
     overlay_pos: list[int] | None = None
     overlay_theme: str = "classic"  # "classic", "neon_glass", "matte_island", "fluent_mica"
+    ui_language: str = "ar"  # "ar" (default) or "en"
     restore_clipboard: bool = False  # False = keep transcribed text in Ctrl+V clipboard
     capitalize_english: str = "word"  # "word" (First Letter Capital of Each Word), "sentence", "none"
     transcription_engine: str = "local"  # "local" (faster-whisper GPU/CPU) or "gemini"

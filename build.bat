@@ -8,6 +8,8 @@ echo ========================================================
 REM Activate virtual environment if present
 if exist ".venv\Scripts\activate.bat" (
     call .venv\Scripts\activate.bat
+) else if exist "E:\voice2text\.venv\Scripts\activate.bat" (
+    call E:\voice2text\.venv\Scripts\activate.bat
 )
 
 REM Terminate any running VoiceTyper instances to prevent file lock errors
@@ -24,6 +26,9 @@ pyinstaller --noconfirm --clean --noconsole --onedir ^
     --name "VoiceTyper" ^
     --icon "voicetyper\assets\icon.ico" ^
     --add-data "voicetyper\assets;assets" ^
+    --exclude-module "PyQt5" ^
+    --exclude-module "matplotlib" ^
+    --exclude-module "IPython" ^
     --hidden-import "PyQt6" ^
     --hidden-import "keyring.backends.Windows" ^
     --hidden-import "scipy.signal" ^
@@ -48,6 +53,9 @@ pyinstaller --noconfirm --clean --noconsole --onefile ^
     --name "VoiceTyper-Standalone" ^
     --icon "voicetyper\assets\icon.ico" ^
     --add-data "voicetyper\assets;assets" ^
+    --exclude-module "PyQt5" ^
+    --exclude-module "matplotlib" ^
+    --exclude-module "IPython" ^
     --hidden-import "PyQt6" ^
     --hidden-import "keyring.backends.Windows" ^
     --hidden-import "scipy.signal" ^
