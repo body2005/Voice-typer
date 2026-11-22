@@ -1,6 +1,5 @@
 """Unit tests for transcriber, prompt injection defenses, error mapping, and text cleanup."""
 
-from typing import Any
 from unittest.mock import MagicMock, patch
 
 from google.genai.errors import APIError
@@ -323,6 +322,77 @@ def test_download_model_with_progress_and_cancel() -> None:
             assert str(td) in path
             assert any("Downloading:" in r[0] for r in progress_reports)
             assert any(r[1] == 100.0 for r in progress_reports)
+
+
+def test_vulkan_detection_and_server_manager() -> None:
+    """Verify Vulkan GPU detection and WhisperVulkanServerManager life cycle."""
+    from voicetyper.transcriber import (
+        WhisperVulkanServerManager,
+        get_cached_ggml_model_path,
+        is_ggml_model_cached,
+    )
+
+    # Server manager instance exists
+    mgr = WhisperVulkanServerManager.get_instance()
+    assert mgr is not None
+
+    # GGML models cache check for tiny (which is present in repo)
+    assert is_ggml_model_cached("tiny") is True
+    tiny_path = get_cached_ggml_model_path("tiny")
+    assert tiny_path is not None
+    assert "ggml-tiny.bin" in tiny_path
+
+    # Nonexistent model
+    assert is_ggml_model_cached("nonexistent_model_xyz") is False
+
+
+def test_vulkan_transcriber_dispatch_and_mock() -> None:
+    """Verify Transcriber dispatches to Vulkan server when engine='vulkan'."""
+    from voicetyper.transcriber import Transcriber
+
+    transcriber = Transcriber(engine="vulkan", whisper_model="tiny")
+    assert transcriber.engine == "vulkan"
+
+    # Mock Vulkan server transcribe
+    with patch.object(transcriber.vulkan_server, "is_running", return_value=True), \
+         patch.object(transcriber.vulkan_server, "transcribe", return_value="تجربة تفريغ ناجحة"):
+        res = transcriber.transcribe(b"RIFFvalidbytes", language_hint="Arabic")
+        assert res.success is True
+        assert res.text == "تجربة تفريغ ناجحة"
+
+
+def test_download_ggml_model_with_progress_and_cancel() -> None:
+    """Verify download_ggml_model_with_progress handles cancellation and progress."""
+    import tempfile
+    from unittest.mock import MagicMock
+
+    import pytest
+
+    from voicetyper.transcriber import download_ggml_model_with_progress
+
+    # Test immediate cancel
+    with pytest.raises(InterruptedError):
+        download_ggml_model_with_progress("tiny", cancel_check=lambda: True)
+
+    # Test stream download with mocked response
+    reports: list[tuple[str, float | None]] = []
+
+    def on_prog(text: str, pct: float | None = None) -> None:
+        reports.append((text, pct))
+
+    with tempfile.TemporaryDirectory() as td:
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.headers = {"Content-Length": "15000000"}
+        mock_resp.iter_content.return_value = [b"x" * 1024 * 1024] * 15
+        mock_resp.__enter__.return_value = mock_resp
+
+        with patch("requests.Session.get", return_value=mock_resp):
+            path = download_ggml_model_with_progress("tiny", on_progress=on_prog, output_dir=td)
+            assert str(td) in path
+            assert any("Downloading:" in r[0] for r in reports)
+            assert any(r[1] == 100.0 for r in reports)
+
 
 
 

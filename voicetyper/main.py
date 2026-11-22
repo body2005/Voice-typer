@@ -358,8 +358,8 @@ class VoiceTyperTrayApp:
         # Show floating pill overlay in subtle standby mode so it is immediately visible
         self.overlay.show_standby()
 
-        # Start background preload of Whisper model if using local engine
-        if self.config.transcription_engine == "local":
+        # Start background preload of Whisper model if using local/vulkan engine
+        if self.config.transcription_engine in ("local", "vulkan"):
             import threading
 
             threading.Thread(
@@ -378,7 +378,12 @@ class VoiceTyperTrayApp:
             )
             self.open_settings()
         else:
-            engine_label = "Local (faster-whisper)" if self.config.transcription_engine == "local" else "Gemini API"
+            if self.config.transcription_engine == "vulkan":
+                engine_label = "Local GPU (whisper.cpp - Vulkan)"
+            elif self.config.transcription_engine == "local":
+                engine_label = "Local (faster-whisper)"
+            else:
+                engine_label = "Gemini API"
             self.tray_icon.showMessage(
                 f"{__app_name__} Ready",
                 f"Hold [{format_hotkey_display(self.config.hotkey)}] to dictate speech.\nEngine: {engine_label}",

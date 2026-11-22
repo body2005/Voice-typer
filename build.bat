@@ -27,6 +27,7 @@ pyinstaller --noconfirm --clean --noconsole --onedir --noupx ^
     --icon "voicetyper\assets\icon.ico" ^
     --version-file "version_info.txt" ^
     --add-data "voicetyper\assets;assets" ^
+    --add-data "voicetyper\bin\whisper-vulkan;bin/whisper-vulkan" ^
     --exclude-module "PyQt5" ^
     --exclude-module "matplotlib" ^
     --exclude-module "IPython" ^
@@ -49,6 +50,12 @@ if %ERRORLEVEL% neq 0 (
     exit /b %ERRORLEVEL%
 )
 
+if exist "dist\VoiceTyper" (
+    if exist "voicetyper\bin\whisper-vulkan" (
+        xcopy /E /I /Y "voicetyper\bin\whisper-vulkan" "dist\VoiceTyper\bin\whisper-vulkan" >nul 2>nul
+    )
+)
+
 echo [2/2] Building Onefile standalone variant (Optional)...
 taskkill /F /IM VoiceTyper.exe /IM VoiceTyper-Standalone.exe 2>nul
 del /f /q dist\VoiceTyper-Standalone.exe 2>nul
@@ -57,6 +64,7 @@ pyinstaller --noconfirm --clean --noconsole --onefile --noupx ^
     --icon "voicetyper\assets\icon.ico" ^
     --version-file "version_info.txt" ^
     --add-data "voicetyper\assets;assets" ^
+    --add-data "voicetyper\bin\whisper-vulkan;bin/whisper-vulkan" ^
     --exclude-module "PyQt5" ^
     --exclude-module "matplotlib" ^
     --exclude-module "IPython" ^

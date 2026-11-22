@@ -16,9 +16,13 @@ import io
 import logging
 import os
 import re
+import socket
+import subprocess
+import sys
 import threading
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable
 
 import numpy as np
@@ -46,7 +50,7 @@ DEFAULT_BILINGUAL_PROMPT = (
 )
 
 MODELS_CATALOG: list[tuple[str, str, str]] = [
-    ("large-v3-turbo", "large-v3-turbo", "~1.5 GB"),
+    ("large-v3-turbo", "large-v3-turbo", "~547 MB"),
     ("Systran/faster-whisper-large-v3", "large-v3", "~3.0 GB"),
     ("deepdml/faster-whisper-large-v3-turbo-ct2", "large-v3-turbo-ct2", "~1.5 GB"),
     ("medium", "medium", "~1.5 GB"),
@@ -55,6 +59,31 @@ MODELS_CATALOG: list[tuple[str, str, str]] = [
     ("tiny", "tiny", "~75 MB"),
 ]
 
+GGML_MODEL_FILES: dict[str, str] = {
+    "large-v3-turbo": "ggml-large-v3-turbo-q5_0.bin",
+    "large-v3-turbo-q5_0": "ggml-large-v3-turbo-q5_0.bin",
+    "turbo": "ggml-large-v3-turbo-q5_0.bin",
+    "large-v3": "ggml-large-v3.bin",
+    "Systran/faster-whisper-large-v3": "ggml-large-v3.bin",
+    "deepdml/faster-whisper-large-v3-turbo-ct2": "ggml-large-v3-turbo-q5_0.bin",
+    "medium": "ggml-medium.bin",
+    "small": "ggml-small.bin",
+    "base": "ggml-base.bin",
+    "tiny": "ggml-tiny.bin",
+}
+
+GGML_MODEL_BYTES: dict[str, int] = {
+    "large-v3-turbo": 574_041_195,
+    "large-v3-turbo-q5_0": 574_041_195,
+    "turbo": 574_041_195,
+    "large-v3": 3_090_000_000,
+    "Systran/faster-whisper-large-v3": 3_090_000_000,
+    "deepdml/faster-whisper-large-v3-turbo-ct2": 574_041_195,
+    "medium": 1_530_000_000,
+    "small": 488_000_000,
+    "base": 148_000_000,
+    "tiny": 77_691_713,
+}
 
 MODEL_REPOS: dict[str, str] = {
     "tiny": "Systran/faster-whisper-tiny",
@@ -91,6 +120,55 @@ MODEL_APPROX_BYTES: dict[str, int] = {
     "Systran/faster-whisper-large-v3": 3_240_000_000,
     "deepdml/faster-whisper-large-v3-turbo-ct2": 1_625_000_000,
 }
+
+
+def get_cached_ggml_model_path(size_or_name: str) -> str | None:
+    """Return local path to GGML model .bin file if downloaded, else None."""
+    from voicetyper.paths import get_models_dir, resource_path
+
+    filename = GGML_MODEL_FILES.get(size_or_name, f"ggml-{size_or_name}.bin")
+
+    # Check 1: AppData models directory
+    try:
+        p1 = get_models_dir() / filename
+        if p1.is_file() and p1.stat().st_size > 10_000_000:
+            return str(p1)
+    except Exception:
+        pass
+
+    # Check 2: App root / bundled models directory
+    try:
+        p2 = resource_path(f"models/{filename}")
+        if p2.is_file() and p2.stat().st_size > 10_000_000:
+            return str(p2)
+    except Exception:
+        pass
+
+    # Check 3: Current working directory models/
+    try:
+        p3 = Path("models") / filename
+        if p3.is_file() and p3.stat().st_size > 10_000_000:
+            return str(p3.resolve())
+    except Exception:
+        pass
+
+    # Check 4: For turbo, also check if unquantized ggml-large-v3-turbo.bin exists
+    if "turbo" in size_or_name:
+        for alt in ("ggml-large-v3-turbo.bin", "ggml-large-v3-turbo-q5_0.bin"):
+            for base_dir in [get_models_dir(), resource_path("models"), Path("models")]:
+                try:
+                    p = Path(base_dir) / alt
+                    if p.is_file() and p.stat().st_size > 10_000_000:
+                        return str(p.resolve())
+                except Exception:
+                    pass
+
+    return None
+
+
+def is_ggml_model_cached(size_or_name: str) -> bool:
+    """Check if GGML model binary exists locally and is valid."""
+    return get_cached_ggml_model_path(size_or_name) is not None
 
 
 def get_cached_model_path(size_or_id: str) -> str | None:
@@ -144,8 +222,12 @@ def get_cached_model_path(size_or_id: str) -> str | None:
     return None
 
 
-def is_model_cached(model_size_or_id: str) -> bool:
-    """Check if faster-whisper model files exist locally in VoiceTyper dir or Hugging Face cache."""
+def is_model_cached(model_size_or_id: str, engine: str = "auto") -> bool:
+    """Check if model files exist locally for the specified engine."""
+    if engine == "vulkan":
+        return is_ggml_model_cached(model_size_or_id)
+    if engine == "auto":
+        return is_ggml_model_cached(model_size_or_id) or (get_cached_model_path(model_size_or_id) is not None)
     return get_cached_model_path(model_size_or_id) is not None
 
 
@@ -158,7 +240,9 @@ def download_model_with_progress(
 ) -> str:
     """Direct, resilient chunked streaming downloader for Whisper models with real-time byte & percentage progress."""
     from pathlib import Path
+
     import requests
+
     from voicetyper.paths import get_models_dir
 
     def report(text: str, pct: float | None = None) -> None:
@@ -326,6 +410,114 @@ def download_model_with_progress(
     return str(target_dir)
 
 
+def download_ggml_model_with_progress(
+    size_or_name: str,
+    on_progress: Callable[..., None] | None = None,
+    output_dir: str | None = None,
+    cancel_check: Callable[[], bool] | None = None,
+) -> str:
+    """Direct, resilient chunked streaming downloader for GGML Whisper models with live progress & cancellation."""
+    import requests
+
+    from voicetyper.paths import get_models_dir
+
+    def report(text: str, pct: float | None = None) -> None:
+        if not on_progress:
+            return
+        try:
+            on_progress(text, pct)
+        except TypeError:
+            on_progress(text)
+        except Exception:
+            pass
+
+    filename = GGML_MODEL_FILES.get(size_or_name, f"ggml-{size_or_name}.bin")
+    if output_dir:
+        target_dir = Path(output_dir)
+    else:
+        target_dir = get_models_dir()
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target_file = target_dir / filename
+    part_file = target_dir / f"{filename}.part"
+
+    if target_file.is_file() and target_file.stat().st_size > 10_000_000:
+        report("Model ready ✓", 100.0)
+        return str(target_file)
+
+    report(f"Connecting to download '{filename}'...", 0.0)
+    if cancel_check and cancel_check():
+        raise InterruptedError("Model download cancelled by user.")
+
+    session = requests.Session()
+    session.headers["User-Agent"] = "Mozilla/5.0 VoiceTyper/1.0"
+    try:
+        import certifi
+
+        session.verify = certifi.where()
+    except Exception:
+        session.verify = True
+
+    endpoints = [
+        f"https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{filename}",
+        f"https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/{filename}",
+    ]
+
+    total_bytes = GGML_MODEL_BYTES.get(size_or_name, 500_000_000)
+    last_report_time = 0.0
+    last_err: Exception | None = None
+
+    for url in endpoints:
+        try:
+            if cancel_check and cancel_check():
+                raise InterruptedError("Model download cancelled by user.")
+
+            with session.get(url, stream=True, allow_redirects=True, timeout=(6, 60)) as resp:
+                resp.raise_for_status()
+                cl = resp.headers.get("Content-Length")
+                if cl and int(cl) > 10_000_000:
+                    total_bytes = int(cl)
+
+                downloaded = 0
+                with open(part_file, "wb") as f_out:
+                    for chunk in resp.iter_content(chunk_size=262144):  # 256 KB
+                        if cancel_check and cancel_check():
+                            resp.close()
+                            f_out.close()
+                            if part_file.exists():
+                                part_file.unlink(missing_ok=True)
+                            raise InterruptedError("Model download cancelled by user.")
+                        if chunk:
+                            f_out.write(chunk)
+                            downloaded += len(chunk)
+                            now = time.time()
+                            if now - last_report_time >= 0.2:
+                                pct = min(99.0, (downloaded / max(1, total_bytes)) * 100.0)
+                                mb_curr = downloaded / (1024 * 1024)
+                                mb_tot = total_bytes / (1024 * 1024)
+                                status_text = f"Downloading: {mb_curr:.1f} MB / {mb_tot:.1f} MB ({pct:.0f}%)"
+                                report(status_text, pct)
+                                last_report_time = now
+
+            if part_file.exists() and part_file.stat().st_size > 10_000_000:
+                if target_file.exists():
+                    target_file.unlink()
+                part_file.rename(target_file)
+                report("Download complete. Initializing model...", 100.0)
+                return str(target_file)
+        except InterruptedError:
+            if part_file.exists():
+                part_file.unlink(missing_ok=True)
+            raise
+        except Exception as err:
+            last_err = err
+            if part_file.exists():
+                part_file.unlink(missing_ok=True)
+            logger.warning("Download from %s failed (%s); trying mirror...", url, err)
+            continue
+
+    raise RuntimeError(f"Failed to download GGML model '{filename}': {last_err}")
+
+
 BASE_SYSTEM_PROMPT = """You are an expert real-time voice-to-text transcription engine.
 Your task is to transcribe audio recordings into clean, highly accurate text.
 
@@ -364,6 +556,9 @@ def clean_transcription_text(raw_text: str) -> str:
         return ""
 
     text = raw_text.strip()
+    if text == "[BLANK_AUDIO]":
+        return ""
+    text = text.replace("[BLANK_AUDIO]", "").strip()
 
     # Remove markdown code fences if model hallucinated them
     fence_pattern = re.compile(r"^```(?:[a-zA-Z0-9_\-]+)?\n?(.*?)\n?```$", re.DOTALL)
@@ -437,6 +632,261 @@ def build_system_prompt(language_hint: str = "Auto", custom_vocabulary: str = ""
 
 
 _DETECTED_GPU_NAME: str | None = None
+_DETECTED_VULKAN_GPU: str | None = None
+
+
+def detect_vulkan_gpu() -> str | None:
+    """Detect Vulkan-capable discrete or integrated GPU (AMD Radeon, NVIDIA GeForce, Intel Arc)."""
+    global _DETECTED_VULKAN_GPU
+    if _DETECTED_VULKAN_GPU is not None:
+        return _DETECTED_VULKAN_GPU
+
+    # 1. Try running vulkaninfo.exe --summary
+    try:
+        res = subprocess.run(
+            ["vulkaninfo.exe", "--summary"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+        if res.returncode == 0 or res.stdout:
+            match = re.search(r"deviceName\s*=\s*([^\r\n]+)", res.stdout)
+            if match:
+                clean = match.group(1).strip()
+                _DETECTED_VULKAN_GPU = clean
+                return _DETECTED_VULKAN_GPU
+    except Exception:
+        pass
+
+    # 2. Check via PowerShell CIM VideoController
+    try:
+        out = subprocess.check_output(
+            [
+                "powershell",
+                "-NoProfile",
+                "-Command",
+                "Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name",
+            ],
+            timeout=3,
+        ).decode("utf-8", errors="ignore")
+        gpus = [line.strip() for line in out.splitlines() if line.strip()]
+        for g in gpus:
+            if any(k in g for k in ["Radeon", "GeForce", "RTX", "Arc", "AMD", "NVIDIA"]):
+                clean = g.strip()
+                _DETECTED_VULKAN_GPU = clean
+                return _DETECTED_VULKAN_GPU
+    except Exception:
+        pass
+
+    return None
+
+
+def is_vulkan_available() -> bool:
+    """Return True if whisper-server.exe exists and a Vulkan device is present."""
+    exe = WhisperVulkanServerManager.get_server_exe_path()
+    if not exe or not exe.is_file():
+        return False
+    gpu = detect_vulkan_gpu()
+    return gpu is not None
+
+
+class WhisperVulkanServerManager:
+    """Manages the persistent whisper-server.exe Vulkan background process."""
+
+    _instance: WhisperVulkanServerManager | None = None
+
+    def __init__(self) -> None:
+        self._process: subprocess.Popen | None = None
+        self._port: int = 0
+        self._current_model_path: str = ""
+        self._lock = threading.Lock()
+        self._last_error = ""
+
+    @classmethod
+    def get_instance(cls) -> WhisperVulkanServerManager:
+        if cls._instance is None:
+            cls._instance = cls()
+        return cls._instance
+
+    @staticmethod
+    def get_server_exe_path() -> Path | None:
+        """Find whisper-server.exe in bundled or development bin directory."""
+        from voicetyper.paths import resource_path
+
+        candidates = [
+            resource_path("bin/whisper-vulkan/whisper-server.exe"),
+            Path(__file__).resolve().parent / "bin" / "whisper-vulkan" / "whisper-server.exe",
+            Path("voicetyper/bin/whisper-vulkan/whisper-server.exe").resolve(),
+            Path(sys.executable).parent / "bin" / "whisper-vulkan" / "whisper-server.exe",
+            Path(sys.executable).parent / "_internal" / "bin" / "whisper-vulkan" / "whisper-server.exe",
+        ]
+        for c in candidates:
+            if c.is_file():
+                return c
+        return None
+
+    def is_running(self) -> bool:
+        with self._lock:
+            return self._process is not None and self._process.poll() is None and self._port > 0
+
+    def start(self, model_path: str, timeout_sec: float = 20.0) -> bool:
+        """Start or reuse whisper-server sidecar with specified model."""
+        with self._lock:
+            if (
+                self._process is not None
+                and self._process.poll() is None
+                and self._port > 0
+                and self._current_model_path == model_path
+            ):
+                return True
+
+            self._stop_locked()
+            server_exe = self.get_server_exe_path()
+            if not server_exe or not server_exe.is_file():
+                raise RuntimeError(f"whisper-server.exe binary not found at {server_exe}")
+
+            if not os.path.isfile(model_path):
+                raise FileNotFoundError(f"Model file not found: {model_path}")
+
+            # Allocate free ephemeral port
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind(("127.0.0.1", 0))
+                port = s.getsockname()[1]
+
+            creationflags = 0
+            if sys.platform == "win32":
+                creationflags = subprocess.CREATE_NO_WINDOW
+
+            threads = max(2, min(8, (os.cpu_count() or 4) // 2))
+            cmd = [
+                str(server_exe),
+                "-m",
+                str(model_path),
+                "--port",
+                str(port),
+                "--host",
+                "127.0.0.1",
+                "-t",
+                str(threads),
+                "-fa",
+            ]
+            logger.info("Starting whisper-server Vulkan sidecar on port %d with model %s", port, model_path)
+            try:
+                self._process = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    creationflags=creationflags,
+                )
+            except Exception as e:
+                logger.error("Failed to spawn whisper-server: %s", e)
+                raise RuntimeError(f"Failed to spawn whisper-server: {e}")
+
+        # Wait for server ready (outside lock)
+        import requests
+
+        start_t = time.monotonic()
+        ready = False
+        while time.monotonic() - start_t < timeout_sec:
+            with self._lock:
+                if self._process is None:
+                    break
+                if self._process.poll() is not None:
+                    err_out = ""
+                    try:
+                        err_out = (
+                            self._process.stderr.read().decode("utf-8", errors="ignore")
+                            if self._process.stderr
+                            else ""
+                        )
+                    except Exception:
+                        pass
+                    self._last_error = err_out
+                    logger.error("whisper-server process died on startup: %s", err_out)
+                    raise RuntimeError(f"whisper-server failed to start: {err_out[:200]}")
+
+            try:
+                requests.get(f"http://127.0.0.1:{port}", timeout=0.5)
+                ready = True
+                break
+            except Exception:
+                time.sleep(0.15)
+
+        if not ready:
+            self.stop()
+            raise TimeoutError(f"whisper-server on port {port} failed to become ready within {timeout_sec}s")
+
+        with self._lock:
+            self._port = port
+            self._current_model_path = model_path
+            logger.info("whisper-server Vulkan sidecar is ready on http://127.0.0.1:%d", port)
+            return True
+
+    def transcribe(
+        self,
+        audio_wav_bytes: bytes,
+        language: str = "ar",
+        prompt: str = "",
+        timeout_sec: float = 15.0,
+    ) -> str:
+        """Submit audio bytes to the running whisper-server instance."""
+        import requests
+
+        with self._lock:
+            port = self._port
+            proc = self._process
+
+        if proc is None or proc.poll() is not None or port <= 0:
+            raise RuntimeError("whisper-server is not running or has crashed")
+
+        lang_param = "auto"
+        if language in ("Arabic", "ar"):
+            lang_param = "ar"
+        elif language in ("English", "en"):
+            lang_param = "en"
+
+        files = {"file": ("audio.wav", audio_wav_bytes, "audio/wav")}
+        data = {
+            "language": lang_param,
+            "prompt": prompt,
+            "response_format": "json",
+            "temperature": "0.0",
+        }
+
+        resp = requests.post(
+            f"http://127.0.0.1:{port}/inference",
+            files=files,
+            data=data,
+            timeout=timeout_sec,
+        )
+        if resp.status_code != 200:
+            raise RuntimeError(f"whisper-server returned HTTP {resp.status_code}: {resp.text}")
+
+        res_json = resp.json()
+        raw_out = str(res_json.get("text", "")).strip()
+        if raw_out == "[BLANK_AUDIO]":
+            return ""
+        return raw_out.replace("[BLANK_AUDIO]", "").strip()
+
+    def _stop_locked(self) -> None:
+        if self._process is not None:
+            logger.info("Stopping whisper-server Vulkan sidecar (port %d)...", self._port)
+            try:
+                self._process.terminate()
+                self._process.wait(timeout=2.0)
+            except Exception:
+                try:
+                    self._process.kill()
+                except Exception:
+                    pass
+            self._process = None
+            self._port = 0
+            self._current_model_path = ""
+
+    def stop(self) -> None:
+        """Gracefully terminate whisper-server process."""
+        with self._lock:
+            self._stop_locked()
 
 
 def get_gpu_hardware_info() -> str:
@@ -445,7 +895,13 @@ def get_gpu_hardware_info() -> str:
     if _DETECTED_GPU_NAME is not None:
         return _DETECTED_GPU_NAME
 
-    # Check CUDA first
+    # Check Vulkan first
+    vulkan_gpu = detect_vulkan_gpu()
+    if vulkan_gpu:
+        _DETECTED_GPU_NAME = vulkan_gpu.replace("Radeon ", "").strip()
+        return _DETECTED_GPU_NAME
+
+    # Check CUDA
     try:
         import ctranslate2
 
@@ -457,8 +913,6 @@ def get_gpu_hardware_info() -> str:
 
     # Query Windows Video Controllers via powershell
     try:
-        import subprocess
-
         out = subprocess.check_output(
             [
                 "powershell",
@@ -498,6 +952,14 @@ def get_optimal_device(
     if device_pref == "cpu":
         ctype = compute_type_pref if compute_type_pref != "auto" else "int8"
         return "cpu", ctype, "CPU"
+    if device_pref == "vulkan":
+        gpu_name = detect_vulkan_gpu() or get_gpu_hardware_info() or "Vulkan GPU"
+        return "vulkan", "fp16", f"GPU (Vulkan - {gpu_name})"
+
+    # Auto detect Vulkan GPU if available
+    if is_vulkan_available():
+        gpu_name = detect_vulkan_gpu() or get_gpu_hardware_info() or "Vulkan GPU"
+        return "vulkan", "fp16", f"GPU (Vulkan - {gpu_name})"
 
     # Auto detect CUDA via ctranslate2
     try:
@@ -995,7 +1457,7 @@ class LocalWhisperTranscriber:
 
 
 class Transcriber:
-    """Unified transcription engine delegating to either faster-whisper or Gemini API."""
+    """Unified transcription engine delegating to Vulkan whisper.cpp, faster-whisper, or Gemini API."""
 
     def __init__(
         self,
@@ -1010,6 +1472,7 @@ class Transcriber:
         self.api_key = api_key
         self.model_name = model_name
         self.engine = engine
+        self.whisper_model = whisper_model
         self.timeout_sec = timeout_sec
         self._client: Any = None
         self.local_engine = LocalWhisperTranscriber(
@@ -1017,36 +1480,60 @@ class Transcriber:
             device=whisper_device,
             compute_type=whisper_compute_type,
         )
+        self.vulkan_server = WhisperVulkanServerManager.get_instance()
+
+        # Dedicated GGML download tracking
+        self._download_lock = threading.Lock()
+        self._is_ggml_downloading = False
+        self._ggml_download_pct: float | None = None
+        self._ggml_download_text = ""
+        self._download_listeners: list[Callable[..., None]] = []
+        self._cancel_ggml_event = threading.Event()
 
     def set_engine(self, engine: str) -> None:
         self.engine = engine
 
     def set_whisper_model(self, model_name: str) -> None:
+        self.whisper_model = model_name
         self.local_engine.set_model(model_name)
 
     @property
     def is_model_loaded(self) -> bool:
         """Return True if local model is loaded or if engine is cloud-based."""
-        if self.engine != "local":
+        if self.engine == "gemini":
             return True
+        if self.engine == "vulkan":
+            return self.vulkan_server.is_running() and bool(self.vulkan_server._current_model_path)
         return self.local_engine.is_model_loaded
 
     @property
     def is_downloading(self) -> bool:
         """Return True if local model download is actively running."""
+        with self._download_lock:
+            if self._is_ggml_downloading:
+                return True
         return self.local_engine.is_downloading
 
     @property
     def download_info(self) -> tuple[str, float | None, str]:
         """Return (status_text, pct, model_name)."""
+        with self._download_lock:
+            if self._is_ggml_downloading:
+                return self._ggml_download_text, self._ggml_download_pct, self.whisper_model
         return self.local_engine.download_info
 
     def add_download_listener(self, cb: Callable[..., None]) -> None:
         """Register listener for model download progress."""
+        with self._download_lock:
+            if cb not in self._download_listeners:
+                self._download_listeners.append(cb)
         self.local_engine.add_download_listener(cb)
 
     def remove_download_listener(self, cb: Callable[..., None]) -> None:
         """Unregister listener for model download progress."""
+        with self._download_lock:
+            if cb in self._download_listeners:
+                self._download_listeners.remove(cb)
         self.local_engine.remove_download_listener(cb)
 
     def preload_model(
@@ -1055,7 +1542,69 @@ class Transcriber:
         cancel_check: Callable[[], bool] | None = None,
         force_reload: bool = False,
     ) -> bool:
-        """Preload or download the local faster-whisper model."""
+        """Preload or download the local model for the active engine."""
+        effective_engine = self.engine
+        if effective_engine == "vulkan" or (effective_engine == "local" and is_vulkan_available() and is_ggml_model_cached(self.whisper_model)):
+            effective_engine = "vulkan"
+
+        if effective_engine == "vulkan":
+            with self._download_lock:
+                self._cancel_ggml_event.clear()
+
+            def effective_cancel() -> bool:
+                return (cancel_check() if cancel_check else False) or self._cancel_ggml_event.is_set()
+
+            def emit_prog(msg: str, pct: float | None = None) -> None:
+                with self._download_lock:
+                    self._ggml_download_text = msg
+                    self._ggml_download_pct = pct
+                    listeners = list(self._download_listeners)
+                if on_progress:
+                    try:
+                        on_progress(msg, pct)
+                    except Exception:
+                        pass
+                for cb in listeners:
+                    try:
+                        cb(msg, pct, self.whisper_model)
+                    except Exception:
+                        pass
+
+            cached_path = get_cached_ggml_model_path(self.whisper_model)
+            if not cached_path:
+                with self._download_lock:
+                    self._is_ggml_downloading = True
+                emit_prog(f"Downloading model '{self.whisper_model}'...", 0.0)
+                try:
+                    cached_path = download_ggml_model_with_progress(
+                        self.whisper_model,
+                        on_progress=emit_prog,
+                        cancel_check=effective_cancel,
+                    )
+                except InterruptedError:
+                    with self._download_lock:
+                        self._is_ggml_downloading = False
+                    emit_prog("Download cancelled (تم إلغاء التحميل)", None)
+                    return False
+                except Exception as err:
+                    with self._download_lock:
+                        self._is_ggml_downloading = False
+                    emit_prog(f"Download error: {err}", None)
+                    return False
+                finally:
+                    with self._download_lock:
+                        self._is_ggml_downloading = False
+
+            emit_prog("Loading model into GPU VRAM (whisper.cpp)...", 99.0)
+            try:
+                self.vulkan_server.start(cached_path, timeout_sec=20.0)
+                emit_prog("Model ready ✓", 100.0)
+                return True
+            except Exception as err:
+                logger.error("Failed to start whisper-server with %s: %s", cached_path, err)
+                emit_prog(f"GPU Engine error: {err}", None)
+                return False
+
         return self.local_engine.preload_model(
             on_progress=on_progress,
             cancel_check=cancel_check,
@@ -1064,15 +1613,38 @@ class Transcriber:
 
     def cancel_download(self) -> None:
         """Signal ongoing local model download to abort."""
+        self._cancel_ggml_event.set()
         self.local_engine.cancel_download()
+        with self._download_lock:
+            self._is_ggml_downloading = False
+            self._ggml_download_text = "Download cancelled"
+            self._ggml_download_pct = None
+            listeners = list(self._download_listeners)
+        for cb in listeners:
+            try:
+                cb("Download cancelled (تم إلغاء التحميل)", None, self.whisper_model)
+            except Exception:
+                pass
 
     def reset_cancel_download(self) -> None:
         """Reset download cancellation event."""
+        self._cancel_ggml_event.clear()
         self.local_engine.reset_cancel_download()
+        with self._download_lock:
+            self._is_ggml_downloading = False
+
+    def shutdown(self) -> None:
+        """Clean shutdown of sidecar processes and engines."""
+        logger.info("Shutting down transcriber engines...")
+        try:
+            self.vulkan_server.stop()
+        except Exception as err:
+            logger.debug("Error stopping vulkan server: %s", err)
 
     def get_active_device_info(self) -> str:
-        """Return human-readable device string (e.g. 'GPU (CUDA)' or 'CPU')."""
-        return self.local_engine.device_label
+        """Return human-readable device string (e.g. 'GPU (Vulkan - AMD Radeon RX 5600 XT)' or 'CPU')."""
+        _, _, dev_label = get_optimal_device()
+        return dev_label
 
     def set_api_key(self, api_key: str) -> None:
         self.api_key = api_key
@@ -1104,7 +1676,84 @@ class Transcriber:
         cancel_check: Callable[[], bool] | None = None,
     ) -> TranscriptionResult:
         """Transcribe audio using the configured active engine."""
-        if self.engine == "local":
+        if self.engine == "vulkan" or (
+            self.engine == "local"
+            and is_vulkan_available()
+            and is_ggml_model_cached(self.whisper_model)
+        ):
+            # Vulkan GPU engine
+            cached_path = get_cached_ggml_model_path(self.whisper_model)
+            if not cached_path:
+                return TranscriptionResult(
+                    success=False,
+                    error_message=f"Model '{self.whisper_model}' is not downloaded. Open Settings to download.",
+                    error_type="engine",
+                    duration_sec=0.0,
+                )
+
+            # Ensure server is running
+            if (
+                not self.vulkan_server.is_running()
+                or self.vulkan_server._current_model_path != cached_path
+            ):
+                try:
+                    self.vulkan_server.start(cached_path, timeout_sec=20.0)
+                except Exception as srv_err:
+                    return TranscriptionResult(
+                        success=False,
+                        error_message=f"Vulkan GPU engine failed to start: {srv_err}",
+                        error_type="engine",
+                        duration_sec=0.0,
+                    )
+
+            if cancel_check and cancel_check():
+                return TranscriptionResult(
+                    success=False,
+                    error_message="Canceled",
+                    error_type="canceled",
+                    duration_sec=0.0,
+                )
+
+            # Build bilingual initial prompt
+            if language_hint in ("Auto", "Arabic"):
+                vocab = custom_vocabulary.strip()
+                initial_prompt = f"{DEFAULT_BILINGUAL_PROMPT} {vocab}".strip()
+            else:
+                initial_prompt = custom_vocabulary.strip()
+
+            start_time = time.monotonic()
+            try:
+                raw_text = self.vulkan_server.transcribe(
+                    audio_wav_bytes=audio_wav_bytes,
+                    language=language_hint,
+                    prompt=initial_prompt,
+                    timeout_sec=15.0,
+                )
+                cleaned = clean_transcription_text(raw_text)
+                elapsed = time.monotonic() - start_time
+                gpu_name = detect_vulkan_gpu() or "Vulkan GPU"
+                logger.info(
+                    "[Vulkan GPU - %s] Transcription succeeded in %.2fs (length=%d chars)",
+                    gpu_name,
+                    elapsed,
+                    len(cleaned),
+                )
+                return TranscriptionResult(
+                    success=True,
+                    text=cleaned,
+                    duration_sec=elapsed,
+                )
+            except Exception as err:
+                elapsed = time.monotonic() - start_time
+                logger.error("[Vulkan GPU] Transcription error: %s", err)
+                return TranscriptionResult(
+                    success=False,
+                    error_message=f"Vulkan GPU error: {err}",
+                    error_type="engine",
+                    duration_sec=elapsed,
+                )
+
+        if self.engine in ("local", "faster_whisper"):
             return self.local_engine.transcribe(
                 audio_data=audio_wav_bytes,
                 language_hint=language_hint,

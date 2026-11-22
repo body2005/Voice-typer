@@ -352,7 +352,7 @@ class VoiceTyperController(QObject):
             self._stop_and_process()
 
     def _start_transcription_worker(self, wav_bytes: bytes, job_id: int) -> None:
-        """Execute transcription on a dedicated background thread."""
+        """Execute transcription on a dedicated background thread with watchdog timeout."""
         def is_job_canceled() -> bool:
             with self._state_lock:
                 return self._job_id != job_id
@@ -366,10 +366,10 @@ class VoiceTyperController(QObject):
                     cancel_check=is_job_canceled,
                 )
             except Exception as err:
-                logger.error("Unexpected worker exception during transcription: %s", err)
+                logger.error("Unexpected worker exception during transcription: %s", err, exc_info=True)
                 res = TranscriptionResult(
                     success=False,
-                    error_message="Unexpected error",
+                    error_message=f"Transcription error: {err}",
                     error_type="unknown",
                 )
 
@@ -387,6 +387,20 @@ class VoiceTyperController(QObject):
             daemon=True,
         )
         self._active_worker_thread.start()
+
+        # Hard watchdog guard: Never allow the app to stay stuck on "Processing speech..."
+        def watchdog_guard() -> None:
+            with self._state_lock:
+                if self._job_id == job_id and self._state == AppState.PROCESSING:
+                    logger.warning("Transcription job %d exceeded watchdog timeout (25s). Resetting to IDLE.", job_id)
+                    self._job_id += 1
+                    is_ar = getattr(self.config, "ui_language", "ar") == "ar"
+                    timeout_msg = "انتهت مهلة المعالجة. يرجى مراجعة إعدادات المحرك." if is_ar else "Transcription timed out. Check engine settings."
+                    self._show_error(timeout_msg)
+
+        watchdog = threading.Timer(25.0, watchdog_guard)
+        watchdog.daemon = True
+        watchdog.start()
 
     def _on_transcription_completed(self, result: TranscriptionResult, job_id: int) -> None:
         """Handle completion of transcription worker."""
@@ -503,4 +517,8 @@ class VoiceTyperController(QObject):
             self._error_reset_timer = None
 
         self.recorder.stop_stream()
+        try:
+            self.transcriber.shutdown()
+        except Exception as err:
+            logger.debug("Transcriber shutdown error: %s", err)
         self._transition_to(AppState.IDLE)

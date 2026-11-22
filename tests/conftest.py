@@ -11,5 +11,5 @@ if str(project_root) not in sys.path:
 from PyQt6.QtWidgets import QApplication  # noqa: E402
 
 # Ensure QApplication is initialized for the test suite
-q_app = QApplication.instance() or QApplication(sys.argv)
+q_app: QApplication | None = QApplication.instance() or QApplication(sys.argv)
 

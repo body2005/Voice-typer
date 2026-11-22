@@ -64,7 +64,7 @@ QDialog {
 QLabel {
     color: #E8EAED;
 }
-QLineEdit, QComboBox, QSpinBox {
+QLineEdit, QSpinBox {
     background-color: #2D2F31;
     color: #FFFFFF;
     border: 1px solid #3C4043;
@@ -72,13 +72,40 @@ QLineEdit, QComboBox, QSpinBox {
     padding: 6px 10px;
     font-size: 13px;
 }
-QLineEdit:focus, QComboBox:focus, QSpinBox:focus {
+QLineEdit:focus, QSpinBox:focus {
+    border: 1px solid #8AB4F8;
+    background-color: #35373A;
+}
+QComboBox {
+    background-color: #2D2F31;
+    color: #FFFFFF;
+    border: 1px solid #3C4043;
+    border-radius: 6px;
+    padding-left: 12px;
+    padding-right: 28px;
+    min-height: 24px;
+    min-width: 170px;
+    font-size: 13px;
+}
+QComboBox:focus {
     border: 1px solid #8AB4F8;
     background-color: #35373A;
 }
 QComboBox::drop-down {
+    subcontrol-origin: padding;
+    subcontrol-position: top right;
+    width: 24px;
     border: none;
-    padding-right: 8px;
+}
+QComboBox::down-arrow {
+    width: 0;
+    height: 0;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-top: 5px solid #9AA0A6;
+}
+QComboBox::down-arrow:hover {
+    border-top-color: #FFFFFF;
 }
 QComboBox QAbstractItemView {
     background-color: #2D2F31;
@@ -89,7 +116,7 @@ QComboBox QAbstractItemView {
 }
 QComboBox QAbstractItemView::item {
     min-height: 28px;
-    padding: 4px 8px;
+    padding: 4px 10px;
 }
 QCheckBox {
     color: #E8EAED;
@@ -137,7 +164,8 @@ TEXTS: dict[str, dict[str, str]] = {
         "title": "إعدادات VoiceTyper",
         "subtitle": "تخصيص تفضيلات الإملاء الصوتي بالضغط للتحدث",
         "engine_label": "محرك التفريغ الصوتي:",
-        "engine_local": "محلي (faster-whisper) - 100% بدون إنترنت (GPU/CPU)",
+        "engine_vulkan": "محلي - كارت الشاشة (whisper.cpp - Vulkan GPU)",
+        "engine_local": "محلي (faster-whisper) - معالج / كودا (CPU/CUDA)",
         "engine_cloud": "سحابي (Google Gemini API)",
         "model_label": "نموذج Whisper المحلي:",
         "api_key_label_local": "مفتاح Gemini API (اختياري):",
@@ -193,7 +221,8 @@ TEXTS: dict[str, dict[str, str]] = {
         "title": "VoiceTyper Settings",
         "subtitle": "Configure your Push-to-Talk voice dictation preferences",
         "engine_label": "Transcription Engine:",
-        "engine_local": "Local (faster-whisper) - 100% Offline GPU/CPU",
+        "engine_vulkan": "Local GPU (whisper.cpp - Vulkan)",
+        "engine_local": "Local (faster-whisper) - CPU/CUDA",
         "engine_cloud": "Google Gemini API - Cloud",
         "model_label": "Local Whisper Model:",
         "api_key_label_local": "Gemini API Key (Optional):",
@@ -576,7 +605,7 @@ class SettingsDialog(QDialog):
             self.transcriber.add_download_listener(self._dl_listener)
 
         self.setWindowTitle("VoiceTyper Settings")
-        self.setMinimumWidth(560)
+        self.setMinimumWidth(620)
         self.setStyleSheet(DARK_STYLESHEET)
 
         # Set window icon if available
@@ -645,11 +674,13 @@ class SettingsDialog(QDialog):
         form_layout.setLabelAlignment(Qt.AlignmentFlag.AlignLeft)
 
         # 1. Transcription Engine
+        t = TEXTS.get(getattr(self, "_current_lang", "ar"), TEXTS["ar"])
         self.engine_combo = QComboBox()
-        self.engine_combo.addItem("محلي (faster-whisper) - 100% بدون إنترنت (GPU/CPU)", "local")
-        self.engine_combo.addItem("سحابي (Google Gemini API)", "gemini")
+        self.engine_combo.addItem(t.get("engine_vulkan", "محلي - كارت الشاشة (whisper.cpp - Vulkan GPU)"), "vulkan")
+        self.engine_combo.addItem(t.get("engine_local", "محلي (faster-whisper) - معالج / كودا (CPU/CUDA)"), "local")
+        self.engine_combo.addItem(t.get("engine_cloud", "سحابي (Google Gemini API)"), "gemini")
         self.engine_combo.currentIndexChanged.connect(self._on_engine_changed)
-        self.engine_row_label = QLabel("محرك التفريغ الصوتي:")
+        self.engine_row_label = QLabel(t["engine_label"])
         form_layout.addRow(self.engine_row_label, self.engine_combo)
 
         # 2. Local Whisper Model & Hardware Info
@@ -761,11 +792,11 @@ class SettingsDialog(QDialog):
         self.api_key_input.setPlaceholderText("مفتاح Gemini API (اختياري عند استخدام المحرك المحلي)")
 
         self.toggle_key_btn = QPushButton("إظهار")
-        self.toggle_key_btn.setMinimumWidth(80)
+        self.toggle_key_btn.setFixedWidth(75)
         self.toggle_key_btn.clicked.connect(self._toggle_api_key_visibility)
 
         self.test_key_btn = QPushButton("تجربة الاتصال")
-        self.test_key_btn.setMinimumWidth(110)
+        self.test_key_btn.setFixedWidth(105)
         self.test_key_btn.clicked.connect(self._test_api_key)
 
         key_layout.addWidget(self.api_key_input)
@@ -849,7 +880,7 @@ class SettingsDialog(QDialog):
 
         self.mic_combo = QComboBox()
         self.refresh_mic_btn = QPushButton("تحديث")
-        self.refresh_mic_btn.setMinimumWidth(90)
+        self.refresh_mic_btn.setFixedWidth(80)
         self.refresh_mic_btn.clicked.connect(self._refresh_microphones)
 
         mic_layout.addWidget(self.mic_combo)
@@ -910,6 +941,10 @@ class SettingsDialog(QDialog):
         btn_layout = QHBoxLayout()
 
         self.reset_pos_btn = QPushButton("استعادة موضع الشريط")
+        self.reset_pos_btn.setFixedHeight(26)
+        self.reset_pos_btn.setStyleSheet(
+            "font-size: 11px; padding: 2px 10px; color: #8AB4F8; background-color: #26282B; border: 1px solid #3C4043; border-radius: 4px;"
+        )
         self.reset_pos_btn.clicked.connect(self._reset_overlay_position)
         btn_layout.addWidget(self.reset_pos_btn)
 
@@ -973,7 +1008,7 @@ class SettingsDialog(QDialog):
         self.engine_row_label.setText(t["engine_label"])
         self.model_row_label.setText(t["model_label"])
         curr_engine = str(self.engine_combo.currentData())
-        if curr_engine == "local":
+        if curr_engine in ("local", "vulkan"):
             self.api_key_row_label.setText(t["api_key_label_local"])
             self.api_key_input.setPlaceholderText(t["api_key_placeholder_local"])
         else:
@@ -990,8 +1025,14 @@ class SettingsDialog(QDialog):
         self.vocab_input.setPlaceholderText(t["vocab_placeholder"])
 
         # Combobox items
-        self.engine_combo.setItemText(0, t["engine_local"])
-        self.engine_combo.setItemText(1, t["engine_cloud"])
+        for i in range(self.engine_combo.count()):
+            d = self.engine_combo.itemData(i)
+            if d == "vulkan":
+                self.engine_combo.setItemText(i, t["engine_vulkan"])
+            elif d == "local":
+                self.engine_combo.setItemText(i, t["engine_local"])
+            elif d == "gemini":
+                self.engine_combo.setItemText(i, t["engine_cloud"])
 
         self.theme_combo.setItemText(0, t["theme_classic"])
         self.theme_combo.setItemText(1, t["theme_neon"])
@@ -1154,9 +1195,9 @@ class SettingsDialog(QDialog):
 
     def _on_engine_changed(self, index: int) -> None:
         """Update UI fields based on active transcription engine."""
-        engine = self.engine_combo.itemData(index)
+        engine = str(self.engine_combo.itemData(index))
         t = TEXTS.get(getattr(self, "_current_lang", "ar"), TEXTS["ar"])
-        if engine == "local":
+        if engine in ("local", "vulkan"):
             self.whisper_container.setEnabled(True)
             self.api_key_row_label.setText(t["api_key_label_local"])
             self.api_key_input.setPlaceholderText(t["api_key_placeholder_local"])
@@ -1164,6 +1205,7 @@ class SettingsDialog(QDialog):
             self.whisper_container.setEnabled(False)
             self.api_key_row_label.setText(t["api_key_label_cloud"])
             self.api_key_input.setPlaceholderText(t["api_key_placeholder_cloud"])
+        self._refresh_model_cache_labels()
 
     def _refresh_model_cache_labels(self) -> None:
         """Populate or update model items showing red/gray dot indicators and sizes without text tags."""
@@ -1175,8 +1217,10 @@ class SettingsDialog(QDialog):
         self.whisper_model_combo.blockSignals(True)
         self.whisper_model_combo.clear()
 
+        engine = str(self.engine_combo.currentData()) if hasattr(self, "engine_combo") else "auto"
+
         for model_id, title, size in MODELS_CATALOG:
-            cached = is_model_cached(model_id)
+            cached = is_model_cached(model_id, engine=engine)
             dot_icon = create_dot_icon(cached)
             display_text = title
             self.whisper_model_combo.addItem(dot_icon, display_text, model_id)
@@ -1189,8 +1233,12 @@ class SettingsDialog(QDialog):
         self.whisper_model_combo.blockSignals(False)
 
         sel_model = str(self.whisper_model_combo.currentData())
-        is_cached = is_model_cached(sel_model)
+        is_cached = is_model_cached(sel_model, engine=engine)
         self._update_model_cache_dot(is_cached)
+
+        # Update hardware readout badge
+        _, _, dev_label = get_optimal_device()
+        self.device_badge.setText(f"Hardware: {dev_label}")
 
         t = TEXTS.get(getattr(self, "_current_lang", "ar"), TEXTS["ar"])
         if is_cached:
@@ -1199,7 +1247,7 @@ class SettingsDialog(QDialog):
             self.download_now_btn.hide()
             self.cancel_download_btn.hide()
         else:
-            sz = "~1.5 GB"
+            sz = "~547 MB" if engine == "vulkan" else "~1.5 GB"
             for m, _, s in MODELS_CATALOG:
                 if m == sel_model:
                     sz = s
@@ -1216,7 +1264,8 @@ class SettingsDialog(QDialog):
         if not model_id:
             return
 
-        is_cached = is_model_cached(model_id)
+        engine = str(self.engine_combo.currentData()) if hasattr(self, "engine_combo") else "auto"
+        is_cached = is_model_cached(model_id, engine=engine)
         self._update_model_cache_dot(is_cached)
 
         # Check if a model is currently downloading
@@ -1235,11 +1284,11 @@ class SettingsDialog(QDialog):
         t = TEXTS.get(getattr(self, "_current_lang", "ar"), TEXTS["ar"])
         if is_cached:
             self.model_status_label.setText(t["cached_disk"])
-            self.model_progress_bar.hide()
             self.download_now_btn.hide()
             self.cancel_download_btn.hide()
+            self.model_progress_bar.hide()
         else:
-            sz = "~1.5 GB"
+            sz = "~547 MB" if engine == "vulkan" else "~1.5 GB"
             for m, _, s in MODELS_CATALOG:
                 if m == model_id:
                     sz = s
@@ -1253,21 +1302,23 @@ class SettingsDialog(QDialog):
     def _start_manual_download(self) -> None:
         """Trigger background download of the selected model with progress and cancellation."""
         sel_model = str(self.whisper_model_combo.currentData())
+        eng = str(self.engine_combo.currentData())
         t = TEXTS.get(getattr(self, "_current_lang", "ar"), TEXTS["ar"])
-        if is_model_cached(sel_model):
+        if is_model_cached(sel_model, engine=eng):
             self.model_status_label.setText(t["cached_disk"])
             self.download_now_btn.hide()
             self._update_model_cache_dot(True)
             return
 
         if self.transcriber is not None:
+            self.transcriber.set_engine(eng)
             self.transcriber.set_whisper_model(sel_model)
             self.transcriber.reset_cancel_download()
 
         connecting_msg = (
-            f"جاري الاتصال بـ Hugging Face لتحميل '{sel_model}'..."
+            f"جاري الاتصال لتحميل '{sel_model}'..."
             if getattr(self, "_current_lang", "ar") == "ar"
-            else f"Connecting to Hugging Face to download '{sel_model}'..."
+            else f"Connecting to download '{sel_model}'..."
         )
 
         if self.overlay is not None:

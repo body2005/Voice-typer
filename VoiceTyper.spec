@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
 
-datas = [('voicetyper/assets', 'assets')]
+datas = [('voicetyper/assets', 'assets'), ('voicetyper/bin/whisper-vulkan', 'bin/whisper-vulkan')]
 binaries = []
 hiddenimports = ['PyQt6', 'keyring.backends.Windows', 'scipy.signal', 'hf_transfer']
 tmp_ret = collect_all('faster_whisper')

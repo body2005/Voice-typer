@@ -33,6 +33,10 @@ htmlcov/
 config.json
 *.tmp
 
+# Downloaded Models / Weights
+models/
+*.bin
+
 # IDE / Editor specific
 .idea/
 .vscode/
