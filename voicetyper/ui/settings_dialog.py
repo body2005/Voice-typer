@@ -673,6 +673,11 @@ class SettingsDialog(QDialog):
         reset_pos_btn.clicked.connect(self._reset_overlay_position)
         btn_layout.addWidget(reset_pos_btn)
 
+        desktop_shortcut_btn = QPushButton("Desktop Shortcut 🖥️")
+        desktop_shortcut_btn.setToolTip("Create or refresh VoiceTyper shortcut on your Windows Desktop")
+        desktop_shortcut_btn.clicked.connect(self._create_desktop_shortcut)
+        btn_layout.addWidget(desktop_shortcut_btn)
+
         btn_layout.addStretch()
 
         cancel_btn = QPushButton("Cancel")
@@ -937,6 +942,57 @@ class SettingsDialog(QDialog):
             "Position Reset",
             "Overlay position reset to default (bottom-right above the taskbar clock).",
         )
+
+    def _create_desktop_shortcut(self) -> None:
+        """Create or update a Desktop shortcut for VoiceTyper."""
+        try:
+            import os
+            import sys
+            import winshell
+            from win32com.client import Dispatch
+
+            desktop = winshell.desktop()
+            shortcut_path = os.path.join(desktop, "VoiceTyper.lnk")
+
+            if getattr(sys, "frozen", False):
+                target = sys.executable
+                work_dir = os.path.dirname(target)
+                args = ""
+            else:
+                repo_root = resource_path("").resolve().parent
+                standalone_exe = repo_root / "dist" / "VoiceTyper" / "VoiceTyper.exe"
+                if standalone_exe.exists():
+                    target = str(standalone_exe)
+                    work_dir = str(standalone_exe.parent)
+                    args = ""
+                else:
+                    target = sys.executable
+                    work_dir = str(repo_root)
+                    args = f'"{work_dir}\\main.py"'
+
+            shell = Dispatch("WScript.Shell")
+            shortcut = shell.CreateShortCut(shortcut_path)
+            shortcut.Targetpath = target
+            if args:
+                shortcut.Arguments = args
+            shortcut.WorkingDirectory = work_dir
+            icon_file = resource_path("assets/icon.ico")
+            if icon_file.exists():
+                shortcut.IconLocation = str(icon_file)
+            shortcut.Description = "VoiceTyper - Windows Voice-to-Text Dictation"
+            shortcut.save()
+
+            QMessageBox.information(
+                self,
+                "Desktop Shortcut",
+                "Desktop shortcut created successfully on your Windows Desktop!\n\nتم إنشاء اختصار VoiceTyper على سطح المكتب بنجاح.",
+            )
+        except Exception as err:
+            QMessageBox.warning(
+                self,
+                "Desktop Shortcut Error",
+                f"Failed to create desktop shortcut:\n{err}",
+            )
 
     def _save_and_close(self) -> None:
         """Validate and persist updated configuration."""
