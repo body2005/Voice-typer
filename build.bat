@@ -22,9 +22,10 @@ if not exist "voicetyper\assets\icon.ico" (
 )
 
 echo [1/2] Building Onedir variant (Recommended: fast startup, low false positives)...
-pyinstaller --noconfirm --clean --noconsole --onedir ^
+pyinstaller --noconfirm --clean --noconsole --onedir --noupx ^
     --name "VoiceTyper" ^
     --icon "voicetyper\assets\icon.ico" ^
+    --version-file "version_info.txt" ^
     --add-data "voicetyper\assets;assets" ^
     --exclude-module "PyQt5" ^
     --exclude-module "matplotlib" ^
@@ -49,9 +50,10 @@ if %ERRORLEVEL% neq 0 (
 echo [2/2] Building Onefile standalone variant (Optional)...
 taskkill /F /IM VoiceTyper.exe /IM VoiceTyper-Standalone.exe 2>nul
 del /f /q dist\VoiceTyper-Standalone.exe 2>nul
-pyinstaller --noconfirm --clean --noconsole --onefile ^
+pyinstaller --noconfirm --clean --noconsole --onefile --noupx ^
     --name "VoiceTyper-Standalone" ^
     --icon "voicetyper\assets\icon.ico" ^
+    --version-file "version_info.txt" ^
     --add-data "voicetyper\assets;assets" ^
     --exclude-module "PyQt5" ^
     --exclude-module "matplotlib" ^
@@ -72,6 +74,9 @@ if %ERRORLEVEL% neq 0 (
     echo [ERROR] Onefile build failed.
     exit /b %ERRORLEVEL%
 )
+
+echo [3/3] Signing binaries with Authenticode Digital Certificate...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$cert = Get-ChildItem Cert:\CurrentUser\My -CodeSigningCert | Select-Object -First 1; if (-not $cert) { $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=VoiceTyper Open Source, O=VoiceTyper, C=US' -CertStoreLocation Cert:\CurrentUser\My }; if (Test-Path 'dist\VoiceTyper-Standalone.exe') { Set-AuthenticodeSignature -Certificate $cert -FilePath 'dist\VoiceTyper-Standalone.exe' | Out-Null }; if (Test-Path 'dist\VoiceTyper\VoiceTyper.exe') { Set-AuthenticodeSignature -Certificate $cert -FilePath 'dist\VoiceTyper\VoiceTyper.exe' | Out-Null }; Write-Host '[SUCCESS] Authenticode signature applied successfully.'"
 
 echo ========================================================
 echo Build complete!

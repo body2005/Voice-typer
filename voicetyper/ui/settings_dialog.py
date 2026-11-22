@@ -34,6 +34,7 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QSizePolicy,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -85,6 +86,10 @@ QComboBox QAbstractItemView {
     selection-background-color: #4285F4;
     border: 1px solid #3C4043;
     outline: none;
+}
+QComboBox QAbstractItemView::item {
+    min-height: 28px;
+    padding: 4px 8px;
 }
 QCheckBox {
     color: #E8EAED;
@@ -658,25 +663,34 @@ class SettingsDialog(QDialog):
         model_row.setSpacing(8)
 
         self.whisper_model_combo = QComboBox()
+        self.whisper_model_combo.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        whisper_view = self.whisper_model_combo.view()
+        if whisper_view is not None:
+            whisper_view.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
         self.whisper_model_combo.currentIndexChanged.connect(self._on_whisper_model_changed)
-        model_row.addWidget(self.whisper_model_combo)
+        model_row.addWidget(self.whisper_model_combo, stretch=1)
 
         # Model cache indicator dot button (vibrant glowing red when cached, gray when not)
         self.model_cache_dot = QPushButton()
         self.model_cache_dot.setObjectName("modelCacheDot")
-        self.model_cache_dot.setFixedSize(18, 18)
+        self.model_cache_dot.setFixedSize(16, 16)
+        self.model_cache_dot.setStyleSheet(
+            "QPushButton#modelCacheDot { border: none; background: transparent; padding: 0; min-width: 16px; max-width: 16px; min-height: 16px; max-height: 16px; }"
+        )
         self.model_cache_dot.setCursor(Qt.CursorShape.PointingHandCursor)
         self.model_cache_dot.clicked.connect(self._on_model_cache_dot_clicked)
-        model_row.addWidget(self.model_cache_dot)
+        model_row.addWidget(self.model_cache_dot, stretch=0)
 
-        # Hardware readout badge
+        # Hardware readout badge - compact and small
         _, _, dev_label = get_optimal_device()
-        self.device_badge = QLabel(f"Active Hardware: {dev_label}")
+        self.device_badge = QLabel(f"Hardware: {dev_label}")
         self.device_badge.setStyleSheet(
-            "color: #38BDF8; font-weight: 600; font-size: 11px; padding: 2px 8px; "
-            "background-color: rgba(56, 189, 248, 25); border-radius: 4px; border: 1px solid rgba(56, 189, 248, 60);"
+            "color: #38BDF8; font-weight: 600; font-size: 10px; padding: 1px 6px; "
+            "background-color: rgba(56, 189, 248, 20); border-radius: 4px; border: 1px solid rgba(56, 189, 248, 50);"
         )
-        model_row.addWidget(self.device_badge)
+        self.device_badge.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self.device_badge.setFixedHeight(22)
+        model_row.addWidget(self.device_badge, stretch=0)
 
         whisper_layout.addLayout(model_row)
 
@@ -941,6 +955,15 @@ class SettingsDialog(QDialog):
             self.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
             self.lang_toggle_btn.setText("العربية 🌐")
             self.lang_toggle_btn.setToolTip("تغيير الواجهة إلى اللغة العربية")
+
+        # Force LTR on technical combos so model names and hotkeys are never clipped or reversed
+        if hasattr(self, "whisper_model_combo") and self.whisper_model_combo:
+            self.whisper_model_combo.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+            w_view = self.whisper_model_combo.view()
+            if w_view is not None:
+                w_view.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        if hasattr(self, "hotkey_recorder") and hasattr(self.hotkey_recorder, "preset_combo"):
+            self.hotkey_recorder.preset_combo.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
 
         # Window & Header
         self.setWindowTitle(t["title"])
@@ -1475,6 +1498,8 @@ class SettingsDialog(QDialog):
         """Reset pill position to bottom-right above taskbar clock."""
         self.config_manager.reset_overlay_position()
         self.config.overlay_pos = None
+        if self.overlay is not None and hasattr(self.overlay, "reset_position"):
+            self.overlay.reset_position()
         is_ar = getattr(self, "_current_lang", "ar") == "ar"
         QMessageBox.information(
             self,
@@ -1510,6 +1535,10 @@ class SettingsDialog(QDialog):
         # Re-apply hotkey
         if self.hotkey_manager and hasattr(self.hotkey_manager, "set_hotkey"):
             self.hotkey_manager.set_hotkey(default_cfg.hotkey)
+
+        # Reset overlay position live
+        if self.overlay is not None and hasattr(self.overlay, "reset_position"):
+            self.overlay.reset_position()
 
         QMessageBox.information(
             self,
