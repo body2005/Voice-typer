@@ -996,9 +996,16 @@ class LocalWhisperTranscriber:
         self.device_pref = device
         self.compute_type_pref = compute_type
 
-        self.actual_device, self.actual_compute_type, self.device_label = get_optimal_device(
-            device, compute_type
-        )
+        opt_dev, opt_ctype, opt_label = get_optimal_device(device, compute_type)
+        if opt_dev == "cuda":
+            self.actual_device = "cuda"
+            self.actual_compute_type = opt_ctype
+            self.device_label = opt_label
+        else:
+            # CTranslate2 / faster-whisper only supports 'cuda' or 'cpu'
+            self.actual_device = "cpu"
+            self.actual_compute_type = compute_type if compute_type != "auto" else "int8"
+            self.device_label = "CPU"
         self._model: Any = None
         self._lock = threading.Lock()
         self._transcribe_lock = threading.Lock()
@@ -1193,16 +1200,18 @@ class LocalWhisperTranscriber:
             threads = max(4, (os.cpu_count() or 4) // 2)
 
             def _instantiate(m_id: str) -> Any:
+                dev = self.actual_device if self.actual_device in ("cuda", "cpu") else "cpu"
+                ctype = self.actual_compute_type if dev == "cuda" else "int8"
                 try:
                     return WhisperModel(
                         m_id,
-                        device=self.actual_device,
-                        compute_type=self.actual_compute_type,
-                        cpu_threads=threads if self.actual_device == "cpu" else 4,
+                        device=dev,
+                        compute_type=ctype,
+                        cpu_threads=threads if dev == "cpu" else 4,
                     )
                 except Exception as dev_err:
-                    if self.actual_device == "cuda":
-                        logger.warning("CUDA load failed for %s (%s); falling back to CPU int8...", m_id, dev_err)
+                    if dev == "cuda" or dev != "cpu":
+                        logger.warning("Device '%s' load failed for %s (%s); falling back to CPU int8...", dev, m_id, dev_err)
                         self.actual_device = "cpu"
                         self.actual_compute_type = "int8"
                         self.device_label = "CPU"
@@ -1237,11 +1246,13 @@ class LocalWhisperTranscriber:
                     try:
                         logger.info("Attempting automatic fallback to cached model '%s'...", fb)
                         fb_threads = max(4, (os.cpu_count() or 4) // 2)
+                        fb_dev = self.actual_device if self.actual_device in ("cuda", "cpu") else "cpu"
+                        fb_ctype = self.actual_compute_type if fb_dev == "cuda" else "int8"
                         fb_model = WhisperModel(
                             fb,
-                            device=self.actual_device,
-                            compute_type=self.actual_compute_type,
-                            cpu_threads=fb_threads if self.actual_device == "cpu" else 4,
+                            device=fb_dev,
+                            compute_type=fb_ctype,
+                            cpu_threads=fb_threads if fb_dev == "cpu" else 4,
                             local_files_only=True,
                         )
                         with self._lock:
@@ -1684,6 +1695,17 @@ class Transcriber:
             # Vulkan GPU engine
             cached_path = get_cached_ggml_model_path(self.whisper_model)
             if not cached_path:
+                if is_model_cached(self.whisper_model, engine="local"):
+                    logger.info("GGML model '%s' not cached for Vulkan; falling back to local faster-whisper.", self.whisper_model)
+                    return self.local_engine.transcribe(
+                        audio_data=audio_wav_bytes,
+                        language_hint=language_hint,
+                        custom_vocabulary=custom_vocabulary,
+                        beam_size=beam_size,
+                        vad_filter=vad_filter,
+                        temperature=temperature,
+                        cancel_check=cancel_check,
+                    )
                 return TranscriptionResult(
                     success=False,
                     error_message=f"Model '{self.whisper_model}' is not downloaded. Open Settings to download.",
@@ -1699,6 +1721,17 @@ class Transcriber:
                 try:
                     self.vulkan_server.start(cached_path, timeout_sec=20.0)
                 except Exception as srv_err:
+                    if is_model_cached(self.whisper_model, engine="local"):
+                        logger.warning("Vulkan GPU engine failed to start (%s); falling back to local faster-whisper.", srv_err)
+                        return self.local_engine.transcribe(
+                            audio_data=audio_wav_bytes,
+                            language_hint=language_hint,
+                            custom_vocabulary=custom_vocabulary,
+                            beam_size=beam_size,
+                            vad_filter=vad_filter,
+                            temperature=temperature,
+                            cancel_check=cancel_check,
+                        )
                     return TranscriptionResult(
                         success=False,
                         error_message=f"Vulkan GPU engine failed to start: {srv_err}",
@@ -1746,6 +1779,17 @@ class Transcriber:
             except Exception as err:
                 elapsed = time.monotonic() - start_time
                 logger.error("[Vulkan GPU] Transcription error: %s", err)
+                if is_model_cached(self.whisper_model, engine="local"):
+                    logger.warning("Falling back to local faster-whisper after Vulkan error.")
+                    return self.local_engine.transcribe(
+                        audio_data=audio_wav_bytes,
+                        language_hint=language_hint,
+                        custom_vocabulary=custom_vocabulary,
+                        beam_size=beam_size,
+                        vad_filter=vad_filter,
+                        temperature=temperature,
+                        cancel_check=cancel_check,
+                    )
                 return TranscriptionResult(
                     success=False,
                     error_message=f"Vulkan GPU error: {err}",
