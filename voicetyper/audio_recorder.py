@@ -28,9 +28,9 @@ logger = logging.getLogger(__name__)
 TARGET_SAMPLE_RATE = 16000  # 16 kHz mono 16-bit PCM target
 TARGET_CHANNELS = 1
 PREROLL_DURATION_SEC = 0.30  # ~300 ms pre-roll
-DEFAULT_MIN_DURATION_SEC = 0.30
-DEFAULT_RMS_SILENCE_THRESHOLD = 0.004  # Below this RMS is considered silence
-DEFAULT_PEAK_SILENCE_THRESHOLD = 0.012  # Below this peak is considered silence
+DEFAULT_MIN_DURATION_SEC = 0.15  # Allow short phrases (150 ms)
+DEFAULT_RMS_SILENCE_THRESHOLD = 0.002  # Clean threshold separating quiet noise from voice
+DEFAULT_PEAK_SILENCE_THRESHOLD = 0.008
 
 EXCLUDED_INPUT_DEVICE_NAMES: set[str] = {
     "microsoft sound mapper - input",

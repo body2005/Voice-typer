@@ -298,12 +298,15 @@ class VoiceTyperController(QObject):
             self._show_error("No speech detected")
             return
 
-        is_loaded = getattr(self.transcriber, "is_model_loaded", True)
-        if self.config.transcription_engine == "local" and not is_loaded:
-            info_text, _, _ = getattr(self.transcriber, "download_info", ("", None, ""))
-            self.overlay_show_processing.emit(info_text or "Downloading model...")
+        is_dl = getattr(self.transcriber, "is_downloading", False) is True
+        if is_dl:
+            dl_info = getattr(self.transcriber, "download_info", ("", None, ""))
+            info_text = dl_info[0] if isinstance(dl_info, (tuple, list)) and len(dl_info) > 0 else ""
+            self.overlay_show_processing.emit(str(info_text) or "Downloading model...")
         else:
-            self.overlay_show_processing.emit("Processing speech...")
+            lang = getattr(self.config, "ui_language", "ar")
+            proc_msg = "جاري معالجة الصوت..." if lang == "ar" else "Processing speech..."
+            self.overlay_show_processing.emit(proc_msg)
 
         # Launch transcription in background thread with current job_id
         self._start_transcription_worker(wav_bytes, current_job)

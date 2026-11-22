@@ -174,6 +174,7 @@ TEXTS: dict[str, dict[str, str]] = {
         "typing": "الكتابة بمحاكاة الأحرف (Unicode) بدلاً من اللصق Ctrl+V",
         "toggle": "وضع التبديل (اضغط مرة لبدء التسجيل، ومرة أخرى للإيقاف)",
         "reset_pos": "استعادة موضع الشريط",
+        "reset_settings": "إعادة ضبط الإعدادات 🔄",
         "desktop_shortcut": "أيقونة سطح المكتب 🖥️",
         "cancel": "إلغاء",
         "save": "حفظ الإعدادات",
@@ -229,6 +230,7 @@ TEXTS: dict[str, dict[str, str]] = {
         "typing": "Type text via Unicode keystrokes instead of Ctrl+V paste",
         "toggle": "Toggle dictation mode (press once to start, press again to stop)",
         "reset_pos": "Reset Overlay Position",
+        "reset_settings": "Reset All Settings 🔄",
         "desktop_shortcut": "Desktop Shortcut 🖥️",
         "cancel": "Cancel",
         "save": "Save Settings",
@@ -585,17 +587,14 @@ class SettingsDialog(QDialog):
         main_layout.setContentsMargins(24, 24, 24, 24)
         main_layout.setSpacing(18)
 
-        # Title / Header with Language Switcher opposite to subtitle
+        # Title / Header with Language Switcher opposite
         header_layout = QHBoxLayout()
         header_text_vbox = QVBoxLayout()
         header_text_vbox.setSpacing(4)
 
         self.title_label = QLabel("VoiceTyper Settings")
         self.title_label.setFont(QFont("Segoe UI", 16, QFont.Weight.Bold))
-        self.subtitle_label = QLabel("Configure your Push-to-Talk voice dictation preferences")
-        self.subtitle_label.setStyleSheet("color: #9AA0A6; font-size: 12px;")
         header_text_vbox.addWidget(self.title_label)
-        header_text_vbox.addWidget(self.subtitle_label)
         header_layout.addLayout(header_text_vbox)
 
         header_layout.addStretch()
@@ -893,12 +892,17 @@ class SettingsDialog(QDialog):
         check_layout.addWidget(self.toggle_checkbox)
         main_layout.addLayout(check_layout)
 
-        # Action Buttons (Reset Position / Cancel / Save)
+        # Action Buttons (Reset Position / Reset Settings / Desktop Shortcut / Cancel / Save)
         btn_layout = QHBoxLayout()
 
         self.reset_pos_btn = QPushButton("استعادة موضع الشريط")
         self.reset_pos_btn.clicked.connect(self._reset_overlay_position)
         btn_layout.addWidget(self.reset_pos_btn)
+
+        self.reset_settings_btn = QPushButton("إعادة ضبط الإعدادات 🔄")
+        self.reset_settings_btn.setObjectName("resetSettingsBtn")
+        self.reset_settings_btn.clicked.connect(self._reset_all_settings)
+        btn_layout.addWidget(self.reset_settings_btn)
 
         self.desktop_shortcut_btn = QPushButton("أيقونة سطح المكتب 🖥️")
         self.desktop_shortcut_btn.setToolTip("إنشاء أو تحديث اختصار VoiceTyper على سطح المكتب")
@@ -941,7 +945,6 @@ class SettingsDialog(QDialog):
         # Window & Header
         self.setWindowTitle(t["title"])
         self.title_label.setText(t["title"])
-        self.subtitle_label.setText(t["subtitle"])
 
         # Form Labels
         self.engine_row_label.setText(t["engine_label"])
@@ -993,6 +996,7 @@ class SettingsDialog(QDialog):
         self.refresh_cache_btn.setText(t["check_cache"])
         self.refresh_mic_btn.setText(t["refresh"])
         self.reset_pos_btn.setText(t["reset_pos"])
+        self.reset_settings_btn.setText(t["reset_settings"])
         self.desktop_shortcut_btn.setText(t["desktop_shortcut"])
         self.cancel_btn.setText(t["cancel"])
         self.save_btn.setText(t["save"])
@@ -1480,56 +1484,127 @@ class SettingsDialog(QDialog):
             else "Overlay position reset to default (bottom-right above the taskbar clock).",
         )
 
+    def _reset_all_settings(self) -> None:
+        """Reset all configuration settings back to factory defaults."""
+        lang = getattr(self, "_current_lang", "ar")
+        confirm = QMessageBox.question(
+            self,
+            "إعادة ضبط الإعدادات" if lang == "ar" else "Reset Settings",
+            "هل أنت متأكد من رغبتك في إعادة ضبط جميع الإعدادات إلى القيم الافتراضية؟"
+            if lang == "ar"
+            else "Are you sure you want to reset all settings to factory defaults?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+
+        # Reset config to defaults
+        default_cfg = Config()
+        default_cfg.ui_language = "ar"  # Default Arabic
+        self.config = default_cfg
+        self.config_manager.save_config(default_cfg)
+
+        # Reload values into UI
+        self._load_values()
+
+        # Re-apply hotkey
+        if self.hotkey_manager and hasattr(self.hotkey_manager, "set_hotkey"):
+            self.hotkey_manager.set_hotkey(default_cfg.hotkey)
+
+        QMessageBox.information(
+            self,
+            "تمت الاستعادة" if lang == "ar" else "Settings Reset",
+            "تمت إعادة ضبط جميع الإعدادات إلى الإعدادات الافتراضية بنجاح! ✓"
+            if lang == "ar"
+            else "All settings have been successfully reset to default! ✓",
+        )
+
     def _create_desktop_shortcut(self) -> None:
-        """Create or update a Desktop shortcut for VoiceTyper."""
+        """Create or update a Desktop shortcut for VoiceTyper without external dependencies."""
+        lang = getattr(self, "_current_lang", "ar")
         try:
             import os
+            import subprocess
             import sys
 
-            import winshell
-            from win32com.client import Dispatch
-
-            desktop = winshell.desktop()
+            # 1. Determine Desktop path reliably
+            desktop = os.path.join(os.path.expanduser("~"), "Desktop")
+            if not os.path.exists(desktop):
+                onedrive_desktop = os.path.join(os.path.expanduser("~"), "OneDrive", "Desktop")
+                if os.path.exists(onedrive_desktop):
+                    desktop = onedrive_desktop
             shortcut_path = os.path.join(desktop, "VoiceTyper.lnk")
 
+            # 2. Determine target executable and working directory
             if getattr(sys, "frozen", False):
                 target = sys.executable
                 work_dir = os.path.dirname(target)
                 args = ""
             else:
-                repo_root = resource_path("").resolve().parent
-                standalone_exe = repo_root / "dist" / "VoiceTyper" / "VoiceTyper.exe"
-                if standalone_exe.exists():
-                    target = str(standalone_exe)
-                    work_dir = str(standalone_exe.parent)
+                standalone = os.path.abspath(r"D:\Git Hub\Voice-typer\dist\VoiceTyper-Standalone.exe")
+                if os.path.exists(standalone):
+                    target = standalone
+                    work_dir = os.path.dirname(standalone)
                     args = ""
                 else:
                     target = sys.executable
-                    work_dir = str(repo_root)
+                    work_dir = os.path.abspath(r"D:\Git Hub\Voice-typer")
                     args = f'"{work_dir}\\main.py"'
 
-            shell = Dispatch("WScript.Shell")
-            shortcut = shell.CreateShortCut(shortcut_path)
-            shortcut.Targetpath = target
-            if args:
-                shortcut.Arguments = args
-            shortcut.WorkingDirectory = work_dir
             icon_file = resource_path("assets/icon.ico")
-            if icon_file.exists():
-                shortcut.IconLocation = str(icon_file)
-            shortcut.Description = "VoiceTyper - Windows Voice-to-Text Dictation"
-            shortcut.save()
+            icon_path = str(icon_file) if icon_file.exists() else target
+
+            # 3. Create shortcut using win32com or PowerShell fallback
+            created = False
+            try:
+                import win32com.client
+                shell = win32com.client.Dispatch("WScript.Shell")
+                shortcut = shell.CreateShortcut(shortcut_path)
+                shortcut.TargetPath = target
+                shortcut.WorkingDirectory = work_dir
+                if args:
+                    shortcut.Arguments = args
+                if os.path.exists(icon_path):
+                    shortcut.IconLocation = f"{icon_path},0"
+                shortcut.Description = "VoiceTyper - Windows Voice-to-Text Dictation"
+                shortcut.Save()
+                created = True
+            except Exception as com_err:
+                logger.warning("win32com shortcut creation failed: %s; trying PowerShell fallback", com_err)
+
+            if not created:
+                ps_script = (
+                    f"$ws = New-Object -ComObject WScript.Shell; "
+                    f"$s = $ws.CreateShortcut('{shortcut_path}'); "
+                    f"$s.TargetPath = '{target}'; "
+                    f"$s.WorkingDirectory = '{work_dir}'; "
+                )
+                if args:
+                    ps_script += f"$s.Arguments = '{args}'; "
+                if os.path.exists(icon_path):
+                    ps_script += f"$s.IconLocation = '{icon_path},0'; "
+                ps_script += "$s.Description = 'VoiceTyper'; $s.Save()"
+                subprocess.run(
+                    ["powershell", "-NoProfile", "-Command", ps_script],
+                    check=True,
+                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+                )
 
             QMessageBox.information(
                 self,
-                "اختصار سطح المكتب" if getattr(self, "_current_lang", "ar") == "ar" else "Desktop Shortcut",
-                "تم إنشاء اختصار VoiceTyper على سطح المكتب بنجاح!\n\nDesktop shortcut created successfully.",
+                "اختصار سطح المكتب" if lang == "ar" else "Desktop Shortcut",
+                "تم إنشاء اختصار VoiceTyper على سطح المكتب بنجاح! 🖥️"
+                if lang == "ar"
+                else "VoiceTyper desktop shortcut created successfully! 🖥️",
             )
         except Exception as err:
+            logger.error("Failed to create desktop shortcut: %s", err)
             QMessageBox.warning(
                 self,
-                "خطأ في الاختصار" if getattr(self, "_current_lang", "ar") == "ar" else "Desktop Shortcut Error",
-                f"فشل إنشاء اختصار سطح المكتب:\n{err}",
+                "خطأ في الاختصار" if lang == "ar" else "Shortcut Error",
+                f"فشل إنشاء اختصار سطح المكتب:\n{err}"
+                if lang == "ar"
+                else f"Failed to create desktop shortcut:\n{err}",
             )
 
     def _save_and_close(self) -> None:

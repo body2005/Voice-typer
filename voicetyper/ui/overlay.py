@@ -1534,7 +1534,7 @@ class OverlayPill(QWidget, BaseOverlayRenderer):
         self.update()
 
     def finish_download(self, success: bool, message: str = "") -> None:
-        """Finish download: display checkmark/ready message on success or error on failure."""
+        """Finish download: display ready checkmark briefly or show error on failure."""
         self._is_downloading = False
         self._download_pct = None
         self._hover_cancel = False
@@ -1546,8 +1546,7 @@ class OverlayPill(QWidget, BaseOverlayRenderer):
             self._state = OverlayState.PROCESSING
             self.setWindowOpacity(1.0)
             self.update()
-            # Fade to standby after 2.5 seconds
-            QTimer.singleShot(2500, self._on_download_complete_timeout)
+            QTimer.singleShot(1200, self.show_standby)
         else:
             self.show_error(message or "Download cancelled")
 
